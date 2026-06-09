@@ -3,21 +3,77 @@
 
     const SUPPORTED_PROTOCOLS = new Set(['vless', 'trojan', 'ss']);
 
-    function convertShareLink(input) {
+    function convertShareLink(input, options = {}) {
         const raw = normalizeSingleInput(input);
-        const parsed = parseShareLink(raw);
+        const overrides = normalizeOverrides(options);
+        const parsed = applyOverrides(parseShareLink(raw), overrides);
         const mihomoProxy = toMihomoProxy(parsed);
         const mihomoYaml = renderYamlList([mihomoProxy]);
         const groupSnippet = renderGroupSnippet(mihomoProxy.name);
+        const xrayRaw = renderRawShareLink(raw, parsed, overrides);
 
         return {
             parsed,
             mihomoProxy,
             mihomoYaml,
             groupSnippet,
-            xrayRaw: raw,
+            xrayRaw,
             warnings: parsed.warnings,
         };
+    }
+
+    function normalizeOverrides(options) {
+        const source = isPlainObject(options) ? options : {};
+        return {
+            entryHost: normalizeHostOverride(source.entryHost),
+            name: normalizeNameOverride(source.name),
+        };
+    }
+
+    function normalizeHostOverride(value) {
+        const host = String(value || '').trim();
+        if (!host) {
+            return '';
+        }
+
+        if (/^[a-z][a-z0-9+.-]*:\/\//i.test(host)) {
+            throw new Error('入口地址只填写 IP 或域名，不要带协议。');
+        }
+        if (/[/?#@]/.test(host) || /\s/.test(host)) {
+            throw new Error('入口地址只填写 IP 或域名，不要带路径或参数。');
+        }
+
+        const bracketedIpv6 = host.match(/^\[([^\]]+)]$/);
+        const normalized = bracketedIpv6 ? bracketedIpv6[1] : host;
+        if (!normalized || /[\[\]]/.test(normalized)) {
+            throw new Error('入口地址格式不正确。');
+        }
+        if (normalized.includes(':') && !isLikelyIpv6(normalized)) {
+            throw new Error('入口地址不要带端口。');
+        }
+
+        return normalized;
+    }
+
+    function normalizeNameOverride(value) {
+        return String(value || '').trim();
+    }
+
+    function applyOverrides(parsed, overrides) {
+        const next = {
+            ...parsed,
+            params: { ...parsed.params },
+            warnings: [...parsed.warnings],
+        };
+
+        if (overrides.entryHost) {
+            next.host = overrides.entryHost;
+        }
+        if (overrides.name) {
+            next.name = overrides.name;
+        }
+
+        return next;
     }
 
     function normalizeSingleInput(input) {
@@ -27,11 +83,11 @@
             .filter(Boolean);
 
         if (lines.length === 0) {
-            throw new Error('Paste one proxy share link.');
+            throw new Error('请粘贴一条代理分享链接。');
         }
 
         if (lines.length > 1) {
-            throw new Error('This tool converts one link at a time.');
+            throw new Error('当前一次只支持转换一条链接。');
         }
 
         return lines[0];
@@ -41,7 +97,7 @@
         const protocol = getProtocol(raw);
 
         if (!SUPPORTED_PROTOCOLS.has(protocol)) {
-            throw new Error(`Unsupported protocol: ${protocol || 'unknown'}.`);
+            throw new Error(`暂不支持该协议：${protocol || '未知'}。`);
         }
 
         if (protocol === 'ss') {
@@ -61,7 +117,7 @@
         try {
             url = new URL(raw);
         } catch {
-            throw new Error('Invalid share link URL.');
+            throw new Error('分享链接 URL 格式不正确。');
         }
 
         const params = collectParams(url.searchParams);
@@ -71,19 +127,20 @@
         const warnings = [];
 
         if (!host) {
-            throw new Error('Missing server host.');
+            throw new Error('缺少服务器地址。');
         }
         if (!port) {
-            throw new Error('Missing or invalid server port.');
+            throw new Error('缺少服务器端口，或端口格式不正确。');
         }
 
         const user = decodeMaybe(url.username);
         if (!user) {
-            throw new Error(protocol === 'vless' ? 'Missing VLESS UUID.' : 'Missing Trojan password.');
+            throw new Error(protocol === 'vless' ? '缺少 VLESS UUID。' : '缺少 Trojan 密码。');
         }
 
         return {
             protocol,
+            format: 'url',
             name,
             host,
             port,
@@ -111,6 +168,7 @@
             const credentials = decodeSsCredentials(url.username, url.password);
             return {
                 protocol: 'ss',
+                format: 'url',
                 name,
                 host,
                 port,
@@ -138,7 +196,7 @@
         const atIndex = source.lastIndexOf('@');
 
         if (atIndex < 0) {
-            throw new Error('Invalid Shadowsocks link.');
+            throw new Error('Shadowsocks 链接格式不正确。');
         }
 
         const credentialsPart = source.slice(0, atIndex);
@@ -148,6 +206,7 @@
 
         return {
             protocol: 'ss',
+            format: 'legacy',
             name: name || 'ss-custom',
             host: server.host,
             port: server.port,
@@ -170,13 +229,13 @@
     function splitCredentials(value) {
         const index = value.indexOf(':');
         if (index <= 0) {
-            throw new Error('Missing Shadowsocks method or password.');
+            throw new Error('缺少 Shadowsocks 加密方式或密码。');
         }
 
         const method = value.slice(0, index);
         const password = value.slice(index + 1);
         if (!method || !password) {
-            throw new Error('Missing Shadowsocks method or password.');
+            throw new Error('缺少 Shadowsocks 加密方式或密码。');
         }
 
         return { method, password };
@@ -190,14 +249,14 @@
 
         const index = value.lastIndexOf(':');
         if (index <= 0) {
-            throw new Error('Missing server host or port.');
+            throw new Error('缺少服务器地址或端口。');
         }
 
         const host = value.slice(0, index);
         const port = parsePort(value.slice(index + 1));
 
         if (!host || !port) {
-            throw new Error('Missing server host or port.');
+            throw new Error('缺少服务器地址或端口。');
         }
 
         return { host, port };
@@ -250,6 +309,39 @@
         return node;
     }
 
+    function renderRawShareLink(raw, parsed, overrides) {
+        if (!overrides.entryHost && !overrides.name) {
+            return raw;
+        }
+
+        if (parsed.protocol === 'ss' && parsed.format === 'legacy') {
+            return renderLegacyShadowsocksLink(parsed);
+        }
+
+        try {
+            const url = new URL(raw);
+            if (overrides.entryHost) {
+                url.hostname = formatHostForUrl(overrides.entryHost);
+            }
+            if (overrides.name) {
+                url.hash = encodeURIComponent(overrides.name);
+            }
+            return url.href;
+        } catch {
+            return raw;
+        }
+    }
+
+    function renderLegacyShadowsocksLink(parsed) {
+        const credentials = `${parsed.method}:${parsed.password}`;
+        const server = `${formatHostForAuthority(parsed.host)}:${parsed.port}`;
+        const body = base64UrlEncode(`${credentials}@${server}`).replace(/=+$/, '');
+        const query = new URLSearchParams(parsed.params).toString();
+        const hash = parsed.name ? `#${encodeURIComponent(parsed.name)}` : '';
+
+        return `ss://${body}${query ? `?${query}` : ''}${hash}`;
+    }
+
     function applyNetwork(node, parsed) {
         const params = parsed.params;
         const rawType = (pick(params, ['type', 'network']) || 'tcp').toLowerCase();
@@ -282,7 +374,7 @@
             return;
         }
 
-        parsed.warnings.push(`Transport "${rawType}" is not mapped; using tcp.`);
+        parsed.warnings.push(`暂未映射传输类型 "${rawType}"，已按 tcp 输出。`);
         node.network = 'tcp';
     }
 
@@ -378,7 +470,7 @@
             if (Object.keys(realityOptions).length > 0) {
                 node['reality-opts'] = realityOptions;
             } else {
-                parsed.warnings.push('Reality link is missing public key parameters.');
+                parsed.warnings.push('Reality 链接缺少 public key 参数。');
             }
         }
     }
@@ -391,7 +483,7 @@
 
         const decodedPlugin = decodeMaybe(plugin);
         if (!decodedPlugin.startsWith('v2ray-plugin')) {
-            warnings.push('Unsupported Shadowsocks plugin was ignored.');
+            warnings.push('暂不支持该 Shadowsocks plugin，已忽略。');
             return;
         }
 
@@ -537,6 +629,18 @@
         return String(host || '').replace(/^\[/, '').replace(/]$/, '');
     }
 
+    function formatHostForUrl(host) {
+        return isLikelyIpv6(host) ? `[${stripIpv6Brackets(host)}]` : host;
+    }
+
+    function formatHostForAuthority(host) {
+        return isLikelyIpv6(host) ? `[${stripIpv6Brackets(host)}]` : host;
+    }
+
+    function isLikelyIpv6(host) {
+        return stripIpv6Brackets(host).split(':').length > 2;
+    }
+
     function decodeMaybe(value) {
         try {
             return decodeURIComponent(String(value || ''));
@@ -565,12 +669,28 @@
         }
     }
 
+    function base64UrlEncode(value) {
+        let encoded;
+        if (typeof Buffer !== 'undefined') {
+            encoded = Buffer.from(String(value), 'utf8').toString('base64');
+        } else {
+            encoded = btoa(
+                encodeURIComponent(String(value)).replace(/%([0-9A-F]{2})/g, (_, hex) =>
+                    String.fromCharCode(Number.parseInt(hex, 16)),
+                ),
+            );
+        }
+
+        return encoded.replace(/\+/g, '-').replace(/\//g, '_');
+    }
+
     function isTruthy(value) {
         return ['1', 'true', 'yes'].includes(String(value || '').toLowerCase());
     }
 
     const api = {
         convertShareLink,
+        normalizeHostOverride,
         parseShareLink,
         toMihomoProxy,
         renderYamlList,

@@ -35,6 +35,14 @@ const ssPlainResult = converter.convertShareLink(ssPlain);
 assert.match(ssPlainResult.mihomoYaml, /cipher: "chacha20-ietf-poly1305"/);
 assert.match(ssPlainResult.mihomoYaml, /password: "plain-pass"/);
 
+const ssOverrideResult = converter.convertShareLink(ss, {
+    entryHost: 'ss-entry.example.com',
+    name: 'ss-name',
+});
+assert.match(ssOverrideResult.mihomoYaml, /server: "ss-entry.example.com"/);
+assert.match(ssOverrideResult.xrayRaw, /^ss:\/\/YWVzLTI1Ni1nY206cGFzc3dvcmQ@ss-entry\.example\.com:8388/);
+assert.match(ssOverrideResult.xrayRaw, /#ss-name$/);
+
 const realityResult = converter.convertShareLink(reality);
 assert.match(realityResult.mihomoYaml, /servername: "www.example.com"/);
 assert.match(realityResult.mihomoYaml, /reality-opts:/);
@@ -47,6 +55,32 @@ assert.match(httpUpgradeResult.mihomoYaml, /network: "ws"/);
 assert.match(httpUpgradeResult.mihomoYaml, /v2ray-http-upgrade: true/);
 assert.match(httpUpgradeResult.mihomoYaml, /Host: "edge.example.com"/);
 
-assert.throws(() => converter.convertShareLink('https://example.com'), /Unsupported protocol/);
+assert.strictEqual(vlessResult.xrayRaw, vless);
+
+const overrideResult = converter.convertShareLink(vless, {
+    entryHost: 'edge.example.org',
+    name: '专用节点',
+});
+assert.match(overrideResult.mihomoYaml, /name: "专用节点"/);
+assert.match(overrideResult.mihomoYaml, /server: "edge.example.org"/);
+assert.match(overrideResult.groupSnippet, /- "专用节点"/);
+assert.match(overrideResult.xrayRaw, /^vless:\/\/11111111-1111-4111-8111-111111111111@edge\.example\.org:443/);
+assert.match(overrideResult.xrayRaw, /#%E4%B8%93%E7%94%A8%E8%8A%82%E7%82%B9$/);
+
+const ssLegacy = 'ss://YWVzLTI1Ni1nY206cGFzc3dvcmRAZXhhbXBsZS5vcmc6ODM4OA#legacy-ss';
+const ssLegacyOverride = converter.convertShareLink(ssLegacy, {
+    entryHost: '203.0.113.10',
+    name: 'legacy-name',
+});
+assert.match(ssLegacyOverride.mihomoYaml, /server: "203.0.113.10"/);
+assert.match(ssLegacyOverride.xrayRaw, /^ss:\/\//);
+assert.match(ssLegacyOverride.xrayRaw, /#legacy-name$/);
+
+assert.throws(
+    () => converter.convertShareLink(vless, { entryHost: 'https://edge.example.org' }),
+    /不要带协议/,
+);
+assert.throws(() => converter.convertShareLink(vless, { entryHost: 'edge.example.org:443' }), /不要带端口/);
+assert.throws(() => converter.convertShareLink('https://example.com'), /暂不支持该协议/);
 
 console.log('subscription-converter tests passed');

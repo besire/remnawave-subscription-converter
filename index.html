@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
     <head>
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title>Subscription Converter</title>
+        <title>订阅转换工具</title>
         <style>
             :root {
                 color-scheme: dark;
@@ -121,6 +121,7 @@
             }
 
             textarea,
+            input,
             pre {
                 width: 100%;
                 border: 1px solid var(--line);
@@ -142,8 +143,28 @@
                 outline: none;
             }
 
-            textarea:focus {
+            input {
+                min-height: 38px;
+                padding: 0 11px;
+                outline: none;
+            }
+
+            textarea:focus,
+            input:focus {
                 border-color: var(--accent-2);
+            }
+
+            .options {
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 10px;
+                margin-top: 12px;
+            }
+
+            .hint {
+                margin-top: 6px;
+                color: var(--muted);
+                font-size: 12px;
             }
 
             .actions {
@@ -272,7 +293,8 @@
                 }
 
                 .layout,
-                .meta {
+                .meta,
+                .options {
                     grid-template-columns: 1fr;
                 }
             }
@@ -281,26 +303,49 @@
     <body>
         <main>
             <div class="topbar">
-                <h1>Subscription Converter</h1>
-                <div id="status" class="status">Local only</div>
+                <h1>订阅转换工具</h1>
+                <div id="status" class="status">仅本地处理</div>
             </div>
 
             <div class="layout">
                 <section>
                     <div class="section-head">
-                        <h2>Input</h2>
+                        <h2>输入</h2>
                     </div>
                     <div class="section-body">
-                        <label for="shareLink">Share link</label>
+                        <label for="shareLink">分享链接</label>
                         <textarea
                             id="shareLink"
                             spellcheck="false"
                             placeholder="vless://uuid@example.com:443?type=ws&amp;security=tls#custom"
                         ></textarea>
 
+                        <div class="options">
+                            <div>
+                                <label for="entryHost">入口 IP / 域名</label>
+                                <input
+                                    id="entryHost"
+                                    type="text"
+                                    spellcheck="false"
+                                    placeholder="留空则使用原始地址"
+                                />
+                                <div class="hint">只填 IP 或域名，不要带协议、端口、路径。</div>
+                            </div>
+                            <div>
+                                <label for="nodeName">节点名称</label>
+                                <input
+                                    id="nodeName"
+                                    type="text"
+                                    spellcheck="false"
+                                    placeholder="留空则使用原始名称"
+                                />
+                                <div class="hint">会覆盖 Mihomo 节点名和链接末尾的 #名称。</div>
+                            </div>
+                        </div>
+
                         <div class="actions">
-                            <button id="convertButton" class="primary" type="button">Convert</button>
-                            <button id="clearButton" type="button">Clear</button>
+                            <button id="convertButton" class="primary" type="button">转换</button>
+                            <button id="clearButton" type="button">清空</button>
                         </div>
 
                         <div id="meta" class="meta" aria-live="polite"></div>
@@ -311,24 +356,24 @@
                 <div class="outputs">
                     <div class="output-panel">
                         <div class="output-title">
-                            <strong>Mihomo proxy YAML</strong>
-                            <button id="copyMihomo" type="button" disabled>Copy</button>
+                            <strong>Mihomo 节点 YAML</strong>
+                            <button id="copyMihomo" type="button" disabled>复制</button>
                         </div>
                         <pre id="mihomoOutput"></pre>
                     </div>
 
                     <div class="output-panel">
                         <div class="output-title">
-                            <strong>Proxy group snippet</strong>
-                            <button id="copyGroup" type="button" disabled>Copy</button>
+                            <strong>代理组片段</strong>
+                            <button id="copyGroup" type="button" disabled>复制</button>
                         </div>
                         <pre id="groupOutput"></pre>
                     </div>
 
                     <div class="output-panel">
                         <div class="output-title">
-                            <strong>Xray raw link</strong>
-                            <button id="copyXray" type="button" disabled>Copy</button>
+                            <strong>Xray 原始链接</strong>
+                            <button id="copyXray" type="button" disabled>复制</button>
                         </div>
                         <pre id="xrayOutput"></pre>
                     </div>
@@ -339,6 +384,8 @@
         <script src="./subscription-converter.js"></script>
         <script>
             const input = document.getElementById('shareLink');
+            const entryHostInput = document.getElementById('entryHost');
+            const nodeNameInput = document.getElementById('nodeName');
             const statusEl = document.getElementById('status');
             const metaEl = document.getElementById('meta');
             const warningsEl = document.getElementById('warnings');
@@ -362,32 +409,43 @@
                     clearOutputs();
                 }
             });
+            entryHostInput.addEventListener('input', convertIfReady);
+            nodeNameInput.addEventListener('input', convertIfReady);
 
             function convert() {
                 try {
-                    const result = window.SubscriptionConverter.convertShareLink(input.value);
+                    const result = window.SubscriptionConverter.convertShareLink(input.value, {
+                        entryHost: entryHostInput.value,
+                        name: nodeNameInput.value,
+                    });
                     lastResult = result;
                     mihomoOutput.textContent = result.mihomoYaml;
                     groupOutput.textContent = result.groupSnippet;
                     xrayOutput.textContent = result.xrayRaw;
                     setCopyState(true);
-                    setStatus('Converted', false);
+                    setStatus('已转换', false);
                     renderMeta(result.parsed);
                     renderWarnings(result.warnings);
                 } catch (error) {
                     lastResult = null;
                     clearOutputs();
-                    setStatus(error.message || 'Conversion failed', true);
+                    setStatus(error.message || '转换失败', true);
+                }
+            }
+
+            function convertIfReady() {
+                if (input.value.trim()) {
+                    convert();
                 }
             }
 
             function renderMeta(parsed) {
                 metaEl.innerHTML = '';
                 const fields = [
-                    ['Protocol', parsed.protocol],
-                    ['Name', parsed.name],
-                    ['Server', parsed.host],
-                    ['Port', parsed.port],
+                    ['协议', parsed.protocol],
+                    ['名称', parsed.name],
+                    ['入口地址', parsed.host],
+                    ['端口', parsed.port],
                 ];
 
                 for (const [label, value] of fields) {
@@ -406,8 +464,10 @@
 
             function clearAll() {
                 input.value = '';
+                entryHostInput.value = '';
+                nodeNameInput.value = '';
                 clearOutputs();
-                setStatus('Local only', false);
+                setStatus('仅本地处理', false);
                 input.focus();
             }
 
@@ -437,7 +497,7 @@
                 if (!text) return;
                 try {
                     await navigator.clipboard.writeText(text);
-                    setStatus('Copied', false);
+                    setStatus('已复制', false);
                 } catch {
                     const tmp = document.createElement('textarea');
                     tmp.value = text;
@@ -445,7 +505,7 @@
                     tmp.select();
                     document.execCommand('copy');
                     tmp.remove();
-                    setStatus('Copied', false);
+                    setStatus('已复制', false);
                 }
             }
         </script>

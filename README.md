@@ -1,30 +1,93 @@
-# Subscription Converter
+# Remnawave 订阅转换工具
 
-Open `subscription-converter.html` in a browser. The tool runs locally and does not call a backend.
+这是一个纯前端工具，用来把单条代理分享链接转换成可粘贴到 Remnawave `MIHOMO` 订阅模板里的 YAML 节点。
 
-Input one `vless://`, `trojan://`, or `ss://` share link. Copy the generated Mihomo proxy YAML into the `proxies:` section of a Remnawave Mihomo subscription template, then add the generated proxy name to the desired `proxy-groups` entry.
+支持输入：
 
-Run the parser checks with:
+- `vless://...`
+- `trojan://...`
+- `ss://...`
 
-```bash
-node tools/subscription-converter.test.js
+工具只在浏览器本地解析，不会请求后端，也不会上传你的链接。
+
+## 使用方式
+
+打开 `index.html`，粘贴一条分享链接，然后复制生成结果。
+
+可选项：
+
+- 入口 IP / 域名：填写后会替换原始链接里的入口地址，并同步修改 Mihomo YAML 的 `server` 字段。留空则不改变。
+- 节点名称：填写后会替换 Mihomo YAML 的 `name` 字段，并同步修改 Xray 原始链接末尾的 `#名称`。留空则使用原始名称。
+
+生成结果：
+
+- `Mihomo 节点 YAML`：粘贴到 Remnawave Mihomo 模板的 `proxies:` 下。
+- `代理组片段`：把其中的节点名加入你需要的 `proxy-groups`。
+- `Xray 原始链接`：用于需要 raw/share link 的客户端或手工保存。
+
+## 在 Remnawave 中只给某个用户使用
+
+不要修改默认 `MIHOMO` 模板，否则所有使用默认模板的用户都会看到这个节点。
+
+推荐做法：
+
+1. 新建一个专用 `MIHOMO` 订阅模板。
+2. 把本工具生成的节点 YAML 放进这个专用模板。
+3. 新建一个 `External Squad`。
+4. 只把目标用户加入这个 `External Squad`。
+5. 给这个 `External Squad` 绑定专用的 `MIHOMO` 模板。
+
+这样只有该用户的订阅会使用专用模板，其他用户仍然使用默认模板。
+
+## Dokploy 部署
+
+仓库地址：
+
+```text
+git@github.com:besire/remnawave-subscription-converter.git
 ```
 
-## Deploy With Dokploy
+### Dockerfile 方式
 
-Create a GitHub repository from this `tools/` directory, then create a Dokploy app from that repository.
+Dokploy 应用设置：
 
-Dokploy settings:
+- Repository：`besire/remnawave-subscription-converter`
+- Branch：`main`
+- Build type：`Dockerfile`
+- Dockerfile path：`Dockerfile`
+- Build context：`.`
+- Container port：`80`
 
-- Build type: Dockerfile
-- Dockerfile path: `Dockerfile`
-- Container port: `80`
-- Domain: your converter domain, for example `subconv.example.com`
-- HTTPS: enable through Dokploy/Traefik
+域名绑定时把域名指向这个应用，容器端口填 `80`。不要在 `Advanced -> Ports` 里额外暴露公网端口。
 
-Local build check:
+### Static / SPA 方式
+
+如果你的 Dokploy 版本提供 Static 或 SPA 部署，也可以直接部署：
+
+- Install command：留空
+- Build command：留空
+- Publish / Output directory：`.`
+- SPA fallback：开启，如果有这个选项
+
+静态部署模式一般不会让你选择端口，这是正常的。
+
+## 本地检查
+
+运行解析测试：
+
+```bash
+node subscription-converter.test.js
+```
+
+本地 Docker 检查：
 
 ```bash
 docker build -t subscription-converter .
 docker run --rm -p 8088:80 subscription-converter
+```
+
+然后访问：
+
+```text
+http://localhost:8088/
 ```
