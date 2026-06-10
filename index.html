@@ -372,6 +372,14 @@
 
                     <div class="output-panel">
                         <div class="output-title">
+                            <strong>规则片段</strong>
+                            <button id="copyRule" type="button" disabled>复制</button>
+                        </div>
+                        <pre id="ruleOutput"></pre>
+                    </div>
+
+                    <div class="output-panel">
+                        <div class="output-title">
                             <strong>Xray 原始链接</strong>
                             <button id="copyXray" type="button" disabled>复制</button>
                         </div>
@@ -391,9 +399,11 @@
             const warningsEl = document.getElementById('warnings');
             const mihomoOutput = document.getElementById('mihomoOutput');
             const groupOutput = document.getElementById('groupOutput');
+            const ruleOutput = document.getElementById('ruleOutput');
             const xrayOutput = document.getElementById('xrayOutput');
             const copyMihomo = document.getElementById('copyMihomo');
             const copyGroup = document.getElementById('copyGroup');
+            const copyRule = document.getElementById('copyRule');
             const copyXray = document.getElementById('copyXray');
             let lastResult = null;
 
@@ -401,6 +411,7 @@
             document.getElementById('clearButton').addEventListener('click', clearAll);
             copyMihomo.addEventListener('click', () => copyText(lastResult?.mihomoYaml || ''));
             copyGroup.addEventListener('click', () => copyText(lastResult?.groupSnippet || ''));
+            copyRule.addEventListener('click', () => copyText(lastResult?.ruleSnippet || ''));
             copyXray.addEventListener('click', () => copyText(lastResult?.xrayRaw || ''));
             input.addEventListener('input', () => {
                 if (input.value.trim()) {
@@ -421,6 +432,7 @@
                     lastResult = result;
                     mihomoOutput.textContent = result.mihomoYaml;
                     groupOutput.textContent = result.groupSnippet;
+                    ruleOutput.textContent = result.ruleSnippet;
                     xrayOutput.textContent = result.xrayRaw;
                     setCopyState(true);
                     setStatus('已转换', false);
@@ -475,6 +487,7 @@
                 lastResult = null;
                 mihomoOutput.textContent = '';
                 groupOutput.textContent = '';
+                ruleOutput.textContent = '';
                 xrayOutput.textContent = '';
                 metaEl.innerHTML = '';
                 warningsEl.classList.remove('visible');
@@ -485,6 +498,7 @@
             function setCopyState(enabled) {
                 copyMihomo.disabled = !enabled;
                 copyGroup.disabled = !enabled;
+                copyRule.disabled = !enabled;
                 copyXray.disabled = !enabled;
             }
 

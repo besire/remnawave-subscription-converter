@@ -19,6 +19,8 @@ assert.match(vlessResult.mihomoYaml, /uuid: "11111111-1111-4111-8111-11111111111
 assert.match(vlessResult.mihomoYaml, /ws-opts:/);
 assert.match(vlessResult.mihomoYaml, /max-early-data: 2048/);
 assert.match(vlessResult.mihomoYaml, /Host: "cdn.example.com"/);
+assert.match(vlessResult.ruleSnippet, /rules:/);
+assert.match(vlessResult.ruleSnippet, /MATCH,demo-vless/);
 
 const trojanResult = converter.convertShareLink(trojan);
 assert.match(trojanResult.mihomoYaml, /type: "trojan"/);
@@ -30,6 +32,7 @@ const ssResult = converter.convertShareLink(ss);
 assert.match(ssResult.mihomoYaml, /type: "ss"/);
 assert.match(ssResult.mihomoYaml, /cipher: "aes-256-gcm"/);
 assert.match(ssResult.mihomoYaml, /password: "password"/);
+assert.match(ssResult.ruleSnippet, /MATCH,demo-ss/);
 
 const ssPlainResult = converter.convertShareLink(ssPlain);
 assert.match(ssPlainResult.mihomoYaml, /cipher: "chacha20-ietf-poly1305"/);
@@ -42,6 +45,7 @@ const ssOverrideResult = converter.convertShareLink(ss, {
 assert.match(ssOverrideResult.mihomoYaml, /server: "ss-entry.example.com"/);
 assert.match(ssOverrideResult.xrayRaw, /^ss:\/\/YWVzLTI1Ni1nY206cGFzc3dvcmQ@ss-entry\.example\.com:8388/);
 assert.match(ssOverrideResult.xrayRaw, /#ss-name$/);
+assert.match(ssOverrideResult.ruleSnippet, /MATCH,ss-name/);
 
 const realityResult = converter.convertShareLink(reality);
 assert.match(realityResult.mihomoYaml, /servername: "www.example.com"/);

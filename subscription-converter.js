@@ -10,6 +10,7 @@
         const mihomoProxy = toMihomoProxy(parsed);
         const mihomoYaml = renderYamlList([mihomoProxy]);
         const groupSnippet = renderGroupSnippet(mihomoProxy.name);
+        const ruleSnippet = renderRuleSnippet(mihomoProxy.name);
         const xrayRaw = renderRawShareLink(raw, parsed, overrides);
 
         return {
@@ -17,6 +18,7 @@
             mihomoProxy,
             mihomoYaml,
             groupSnippet,
+            ruleSnippet,
             xrayRaw,
             warnings: parsed.warnings,
         };
@@ -523,6 +525,12 @@
                     proxies: [proxyName],
                 },
             ],
+        });
+    }
+
+    function renderRuleSnippet(groupName) {
+        return renderYamlObject({
+            rules: [`MATCH,${groupName}`],
         });
     }
 

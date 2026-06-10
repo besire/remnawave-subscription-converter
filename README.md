@@ -23,6 +23,7 @@
 
 - `Mihomo 节点 YAML`：粘贴到 Remnawave Mihomo 模板的 `proxies:` 下。
 - `代理组片段`：把其中的节点名加入你需要的 `proxy-groups`。
+- `规则片段`：和 `proxy-groups` 使用同一个名字，避免 `proxy not found`。
 - `Xray 原始链接`：用于需要 raw/share link 的客户端或手工保存。
 
 ## 在 Remnawave 中只给某个用户使用
