@@ -18,17 +18,22 @@
         const usedNames = new Map();
         const items = rawLinks.map((raw, index) => {
             const parsed = parseShareLink(raw);
-            const itemName = resolveItemName(parsed.name, overrides.name, index, rawLinks.length);
+            const itemOverride = resolveItemOverride(overrides, index);
+            const itemName =
+                itemOverride.name || resolveItemName(parsed.name, overrides.name, index, rawLinks.length);
             const withOverrides = applyOverrides(parsed, {
-                ...overrides,
+                entryHost: itemOverride.entryHost || overrides.entryHost,
+                entryPort: itemOverride.entryPort || overrides.entryPort,
                 name: itemName,
             });
             const uniqueName = ensureUniqueName(withOverrides.name, usedNames);
             const finalParsed = { ...withOverrides, name: uniqueName.name };
             const mihomoProxy = toMihomoProxy(finalParsed);
-            const rawNameOverride = overrides.name || uniqueName.changed ? finalParsed.name : '';
+            const rawNameOverride =
+                itemOverride.name || overrides.name || uniqueName.changed ? finalParsed.name : '';
             const xrayRaw = renderRawShareLink(raw, finalParsed, {
-                entryHost: overrides.entryHost,
+                entryHost: itemOverride.entryHost || overrides.entryHost,
+                entryPort: itemOverride.entryPort || overrides.entryPort,
                 name: rawNameOverride,
             });
 
@@ -78,9 +83,11 @@
         const source = isPlainObject(options) ? options : {};
         return {
             entryHost: normalizeHostOverride(source.entryHost),
+            entryPort: normalizePortOverride(source.entryPort),
             name: normalizeNameOverride(source.name),
             groupName: normalizeGroupNameOverride(source.groupName),
             baseConfig: normalizeBaseConfig(source.baseConfig),
+            itemOverrides: normalizeItemOverrides(source.itemOverrides),
         };
     }
 
@@ -113,12 +120,49 @@
         return String(value || '').trim();
     }
 
+    function normalizePortOverride(value) {
+        const portText = String(value || '').trim();
+        if (!portText) {
+            return 0;
+        }
+
+        if (!/^\d+$/.test(portText)) {
+            throw new Error('端口必须是 1-65535 之间的数字。');
+        }
+
+        const port = Number.parseInt(portText, 10);
+        if (!Number.isInteger(port) || port < 1 || port > 65535) {
+            throw new Error('端口必须是 1-65535 之间的数字。');
+        }
+
+        return port;
+    }
+
     function normalizeGroupNameOverride(value) {
         return String(value || '').trim() || DEFAULT_GROUP_NAME;
     }
 
     function normalizeBaseConfig(value) {
         return String(value || '').trim();
+    }
+
+    function normalizeItemOverrides(value) {
+        if (!Array.isArray(value)) {
+            return [];
+        }
+
+        return value.map((item) => {
+            const source = isPlainObject(item) ? item : {};
+            return {
+                entryHost: normalizeHostOverride(source.entryHost),
+                entryPort: normalizePortOverride(source.entryPort),
+                name: normalizeNameOverride(source.name),
+            };
+        });
+    }
+
+    function resolveItemOverride(overrides, index) {
+        return overrides.itemOverrides[index] || {};
     }
 
     function applyOverrides(parsed, overrides) {
@@ -130,6 +174,9 @@
 
         if (overrides.entryHost) {
             next.host = overrides.entryHost;
+        }
+        if (overrides.entryPort) {
+            next.port = overrides.entryPort;
         }
         if (overrides.name) {
             next.name = overrides.name;
@@ -408,7 +455,7 @@
     }
 
     function renderRawShareLink(raw, parsed, overrides) {
-        if (!overrides.entryHost && !overrides.name) {
+        if (!overrides.entryHost && !overrides.entryPort && !overrides.name) {
             return raw;
         }
 
@@ -420,6 +467,9 @@
             const url = new URL(raw);
             if (overrides.entryHost) {
                 url.hostname = formatHostForUrl(overrides.entryHost);
+            }
+            if (overrides.entryPort) {
+                url.port = String(overrides.entryPort);
             }
             if (overrides.name) {
                 url.hash = encodeURIComponent(overrides.name);

@@ -156,9 +156,53 @@
 
             .options {
                 display: grid;
-                grid-template-columns: repeat(2, minmax(0, 1fr));
+                grid-template-columns: repeat(3, minmax(0, 1fr));
                 gap: 10px;
                 margin-top: 12px;
+            }
+
+            .item-overrides {
+                display: none;
+                gap: 8px;
+                margin-top: 12px;
+            }
+
+            .item-overrides.visible {
+                display: grid;
+            }
+
+            .item-override {
+                border: 1px solid var(--line);
+                border-radius: 6px;
+                background: var(--code);
+            }
+
+            .item-override summary {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 12px;
+                min-height: 38px;
+                padding: 8px 10px;
+                cursor: pointer;
+                color: var(--text);
+            }
+
+            .item-override summary strong {
+                min-width: 0;
+                overflow: hidden;
+                color: var(--muted);
+                font-size: 12px;
+                font-weight: 500;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+
+            .item-override-body {
+                display: grid;
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+                gap: 10px;
+                padding: 0 10px 10px;
             }
 
             .base-config {
@@ -302,7 +346,8 @@
 
                 .layout,
                 .meta,
-                .options {
+                .options,
+                .item-override-body {
                     grid-template-columns: 1fr;
                 }
             }
@@ -340,6 +385,18 @@
                                 <div class="hint">只填 IP 或域名，不要带协议、端口、路径。</div>
                             </div>
                             <div>
+                                <label for="entryPort">入口端口</label>
+                                <input
+                                    id="entryPort"
+                                    type="number"
+                                    inputmode="numeric"
+                                    min="1"
+                                    max="65535"
+                                    placeholder="留空则使用原始端口"
+                                />
+                                <div class="hint">只填端口号，例如 443。</div>
+                            </div>
+                            <div>
                                 <label for="nodeName">节点名称</label>
                                 <input
                                     id="nodeName"
@@ -350,6 +407,8 @@
                                 <div class="hint">单条时覆盖名称，多条时作为名称前缀。</div>
                             </div>
                         </div>
+
+                        <div id="itemOverrides" class="item-overrides"></div>
 
                         <div class="base-config">
                             <label for="baseConfig">当前 Mihomo 配置</label>
@@ -420,7 +479,9 @@
             const input = document.getElementById('shareLink');
             const baseConfigInput = document.getElementById('baseConfig');
             const entryHostInput = document.getElementById('entryHost');
+            const entryPortInput = document.getElementById('entryPort');
             const nodeNameInput = document.getElementById('nodeName');
+            const itemOverridesEl = document.getElementById('itemOverrides');
             const statusEl = document.getElementById('status');
             const metaEl = document.getElementById('meta');
             const warningsEl = document.getElementById('warnings');
@@ -435,6 +496,7 @@
             const copyRule = document.getElementById('copyRule');
             const copyXray = document.getElementById('copyXray');
             let lastResult = null;
+            let itemOverrideState = [];
 
             document.getElementById('convertButton').addEventListener('click', convert);
             document.getElementById('clearButton').addEventListener('click', clearAll);
@@ -444,6 +506,7 @@
             copyRule.addEventListener('click', () => copyText(lastResult?.ruleSnippet || ''));
             copyXray.addEventListener('click', () => copyText(lastResult?.xrayRaw || ''));
             input.addEventListener('input', () => {
+                syncItemOverrideControls();
                 if (input.value.trim()) {
                     convert();
                 } else {
@@ -451,14 +514,18 @@
                 }
             });
             entryHostInput.addEventListener('input', convertIfReady);
+            entryPortInput.addEventListener('input', convertIfReady);
             nodeNameInput.addEventListener('input', convertIfReady);
+            baseConfigInput.addEventListener('input', convertIfReady);
 
             function convert() {
                 try {
                     const result = window.SubscriptionConverter.convertShareLinks(input.value, {
                         entryHost: entryHostInput.value,
+                        entryPort: entryPortInput.value,
                         name: nodeNameInput.value,
                         baseConfig: baseConfigInput.value,
+                        itemOverrides: collectItemOverrides(),
                     });
                     lastResult = result;
                     fullMihomoOutput.textContent = result.fullMihomoYaml;
@@ -480,6 +547,91 @@
             function convertIfReady() {
                 if (input.value.trim()) {
                     convert();
+                }
+            }
+
+            function syncItemOverrideControls() {
+                const lines = getInputLines();
+                itemOverrideState = lines.map((_, index) => itemOverrideState[index] || {});
+                itemOverrideState.length = lines.length;
+                itemOverridesEl.innerHTML = '';
+                itemOverridesEl.classList.toggle('visible', lines.length > 0);
+
+                lines.forEach((line, index) => {
+                    const details = document.createElement('details');
+                    details.className = 'item-override';
+                    details.open = lines.length === 1;
+
+                    const summary = document.createElement('summary');
+                    const title = document.createElement('span');
+                    title.textContent = `第 ${index + 1} 条单独设置`;
+                    const preview = document.createElement('strong');
+                    preview.textContent = summarizeLine(line);
+                    summary.append(title, preview);
+
+                    const body = document.createElement('div');
+                    body.className = 'item-override-body';
+                    body.append(
+                        createOverrideField(index, 'entryHost', '入口 IP / 域名', '继承全局或原始地址'),
+                        createOverrideField(index, 'entryPort', '入口端口', '继承全局或原始端口', 'number'),
+                        createOverrideField(index, 'name', '节点名称', '继承全局或原始名称'),
+                    );
+
+                    details.append(summary, body);
+                    itemOverridesEl.appendChild(details);
+                });
+            }
+
+            function createOverrideField(index, key, labelText, placeholder, type = 'text') {
+                const wrapper = document.createElement('div');
+                const id = `item-${index}-${key}`;
+                const label = document.createElement('label');
+                label.htmlFor = id;
+                label.textContent = labelText;
+
+                const control = document.createElement('input');
+                control.id = id;
+                control.type = type;
+                control.spellcheck = false;
+                control.placeholder = placeholder;
+                control.value = itemOverrideState[index]?.[key] || '';
+                if (type === 'number') {
+                    control.inputMode = 'numeric';
+                    control.min = '1';
+                    control.max = '65535';
+                }
+                control.addEventListener('input', () => {
+                    itemOverrideState[index] = {
+                        ...(itemOverrideState[index] || {}),
+                        [key]: control.value,
+                    };
+                    convertIfReady();
+                });
+
+                wrapper.append(label, control);
+                return wrapper;
+            }
+
+            function collectItemOverrides() {
+                return itemOverrideState.map((item) => ({
+                    entryHost: item?.entryHost || '',
+                    entryPort: item?.entryPort || '',
+                    name: item?.name || '',
+                }));
+            }
+
+            function getInputLines() {
+                return input.value
+                    .split(/\r?\n/)
+                    .map((line) => line.trim())
+                    .filter(Boolean);
+            }
+
+            function summarizeLine(line) {
+                try {
+                    return window.SubscriptionConverter.parseShareLink(line).name;
+                } catch {
+                    return line;
                 }
             }
 
@@ -512,7 +664,11 @@
                 input.value = '';
                 baseConfigInput.value = '';
                 entryHostInput.value = '';
+                entryPortInput.value = '';
                 nodeNameInput.value = '';
+                itemOverrideState = [];
+                itemOverridesEl.innerHTML = '';
+                itemOverridesEl.classList.remove('visible');
                 clearOutputs();
                 setStatus('仅本地处理', false);
                 input.focus();

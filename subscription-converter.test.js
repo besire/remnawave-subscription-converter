@@ -66,12 +66,14 @@ assert.strictEqual(vlessResult.xrayRaw, vless);
 
 const overrideResult = converter.convertShareLink(vless, {
     entryHost: 'edge.example.org',
+    entryPort: 8443,
     name: '专用节点',
 });
 assert.match(overrideResult.mihomoYaml, /name: "专用节点"/);
 assert.match(overrideResult.mihomoYaml, /server: "edge.example.org"/);
+assert.match(overrideResult.mihomoYaml, /port: 8443/);
 assert.match(overrideResult.groupSnippet, /- "专用节点"/);
-assert.match(overrideResult.xrayRaw, /^vless:\/\/11111111-1111-4111-8111-111111111111@edge\.example\.org:443/);
+assert.match(overrideResult.xrayRaw, /^vless:\/\/11111111-1111-4111-8111-111111111111@edge\.example\.org:8443/);
 assert.match(overrideResult.xrayRaw, /#%E4%B8%93%E7%94%A8%E8%8A%82%E7%82%B9$/);
 
 const batchResult = converter.convertShareLinks(`${vless}\n${trojan}\n${ss}`, {
@@ -94,6 +96,26 @@ assert.match(batchResult.fullMihomoYaml, /rules:/);
 assert.match(batchResult.xrayRaw, /#%E6%89%B9%E9%87%8F%E8%8A%82%E7%82%B9%201/);
 assert.match(batchResult.xrayRaw, /#%E6%89%B9%E9%87%8F%E8%8A%82%E7%82%B9%202/);
 assert.match(batchResult.xrayRaw, /#%E6%89%B9%E9%87%8F%E8%8A%82%E7%82%B9%203/);
+
+const perItemResult = converter.convertShareLinks(`${vless}\n${trojan}`, {
+    entryHost: 'global.example.com',
+    entryPort: 443,
+    name: '全局节点',
+    itemOverrides: [
+        {},
+        {
+            entryHost: 'line.example.net',
+            entryPort: 9443,
+            name: '第二条节点',
+        },
+    ],
+});
+assert.match(perItemResult.mihomoYaml, /name: "全局节点 1"[\s\S]*server: "global.example.com"[\s\S]*port: 443/);
+assert.match(perItemResult.mihomoYaml, /name: "第二条节点"[\s\S]*server: "line.example.net"[\s\S]*port: 9443/);
+assert.match(perItemResult.xrayRaw, /^vless:\/\/11111111-1111-4111-8111-111111111111@global\.example\.com:443/m);
+assert.match(perItemResult.xrayRaw, /^trojan:\/\/secret@line\.example\.net:9443/m);
+assert.match(perItemResult.fullMihomoYaml, /name: "第二条节点"/);
+assert.match(perItemResult.fullMihomoYaml, /port: 9443/);
 
 const duplicateResult = converter.convertShareLinks(`${ssPlain}\n${ssPlain}`);
 assert.match(duplicateResult.mihomoYaml, /name: "plain-ss"/);
@@ -140,6 +162,14 @@ assert.throws(
     /不要带协议/,
 );
 assert.throws(() => converter.convertShareLink(vless, { entryHost: 'edge.example.org:443' }), /不要带端口/);
+assert.throws(() => converter.convertShareLink(vless, { entryPort: 'abc' }), /端口/);
+assert.throws(
+    () =>
+        converter.convertShareLinks(vless, {
+            itemOverrides: [{ entryPort: 70000 }],
+        }),
+    /端口/,
+);
 assert.throws(() => converter.convertShareLink('https://example.com'), /暂不支持该协议/);
 
 console.log('subscription-converter tests passed');
