@@ -161,6 +161,14 @@
                 margin-top: 12px;
             }
 
+            .base-config {
+                margin-top: 12px;
+            }
+
+            .base-config textarea {
+                min-height: 132px;
+            }
+
             .hint {
                 margin-top: 6px;
                 color: var(--muted);
@@ -317,7 +325,7 @@
                         <textarea
                             id="shareLink"
                             spellcheck="false"
-                            placeholder="vless://uuid@example.com:443?type=ws&amp;security=tls#custom"
+                            placeholder="每行一条：vless://uuid@example.com:443?type=ws&amp;security=tls#custom"
                         ></textarea>
 
                         <div class="options">
@@ -339,8 +347,18 @@
                                     spellcheck="false"
                                     placeholder="留空则使用原始名称"
                                 />
-                                <div class="hint">会覆盖 Mihomo 节点名和链接末尾的 #名称。</div>
+                                <div class="hint">单条时覆盖名称，多条时作为名称前缀。</div>
                             </div>
+                        </div>
+
+                        <div class="base-config">
+                            <label for="baseConfig">当前 Mihomo 配置</label>
+                            <textarea
+                                id="baseConfig"
+                                spellcheck="false"
+                                placeholder="可选：粘贴当前配置，工具会在这个基础上追加节点、代理组引用和规则"
+                            ></textarea>
+                            <div class="hint">留空则生成一份新的基础 Mihomo 配置。</div>
                         </div>
 
                         <div class="actions">
@@ -354,6 +372,14 @@
                 </section>
 
                 <div class="outputs">
+                    <div class="output-panel">
+                        <div class="output-title">
+                            <strong>完整 Mihomo 配置</strong>
+                            <button id="copyFullMihomo" type="button" disabled>复制</button>
+                        </div>
+                        <pre id="fullMihomoOutput"></pre>
+                    </div>
+
                     <div class="output-panel">
                         <div class="output-title">
                             <strong>Mihomo 节点 YAML</strong>
@@ -392,15 +418,18 @@
         <script src="./subscription-converter.js"></script>
         <script>
             const input = document.getElementById('shareLink');
+            const baseConfigInput = document.getElementById('baseConfig');
             const entryHostInput = document.getElementById('entryHost');
             const nodeNameInput = document.getElementById('nodeName');
             const statusEl = document.getElementById('status');
             const metaEl = document.getElementById('meta');
             const warningsEl = document.getElementById('warnings');
+            const fullMihomoOutput = document.getElementById('fullMihomoOutput');
             const mihomoOutput = document.getElementById('mihomoOutput');
             const groupOutput = document.getElementById('groupOutput');
             const ruleOutput = document.getElementById('ruleOutput');
             const xrayOutput = document.getElementById('xrayOutput');
+            const copyFullMihomo = document.getElementById('copyFullMihomo');
             const copyMihomo = document.getElementById('copyMihomo');
             const copyGroup = document.getElementById('copyGroup');
             const copyRule = document.getElementById('copyRule');
@@ -409,6 +438,7 @@
 
             document.getElementById('convertButton').addEventListener('click', convert);
             document.getElementById('clearButton').addEventListener('click', clearAll);
+            copyFullMihomo.addEventListener('click', () => copyText(lastResult?.fullMihomoYaml || ''));
             copyMihomo.addEventListener('click', () => copyText(lastResult?.mihomoYaml || ''));
             copyGroup.addEventListener('click', () => copyText(lastResult?.groupSnippet || ''));
             copyRule.addEventListener('click', () => copyText(lastResult?.ruleSnippet || ''));
@@ -425,18 +455,20 @@
 
             function convert() {
                 try {
-                    const result = window.SubscriptionConverter.convertShareLink(input.value, {
+                    const result = window.SubscriptionConverter.convertShareLinks(input.value, {
                         entryHost: entryHostInput.value,
                         name: nodeNameInput.value,
+                        baseConfig: baseConfigInput.value,
                     });
                     lastResult = result;
+                    fullMihomoOutput.textContent = result.fullMihomoYaml;
                     mihomoOutput.textContent = result.mihomoYaml;
                     groupOutput.textContent = result.groupSnippet;
                     ruleOutput.textContent = result.ruleSnippet;
                     xrayOutput.textContent = result.xrayRaw;
                     setCopyState(true);
-                    setStatus('已转换', false);
-                    renderMeta(result.parsed);
+                    setStatus(`已转换 ${result.items.length} 条`, false);
+                    renderMeta(result);
                     renderWarnings(result.warnings);
                 } catch (error) {
                     lastResult = null;
@@ -451,9 +483,11 @@
                 }
             }
 
-            function renderMeta(parsed) {
+            function renderMeta(result) {
                 metaEl.innerHTML = '';
+                const parsed = result.parsed;
                 const fields = [
+                    ['数量', result.items.length],
                     ['协议', parsed.protocol],
                     ['名称', parsed.name],
                     ['入口地址', parsed.host],
@@ -476,6 +510,7 @@
 
             function clearAll() {
                 input.value = '';
+                baseConfigInput.value = '';
                 entryHostInput.value = '';
                 nodeNameInput.value = '';
                 clearOutputs();
@@ -485,6 +520,7 @@
 
             function clearOutputs() {
                 lastResult = null;
+                fullMihomoOutput.textContent = '';
                 mihomoOutput.textContent = '';
                 groupOutput.textContent = '';
                 ruleOutput.textContent = '';
@@ -496,6 +532,7 @@
             }
 
             function setCopyState(enabled) {
+                copyFullMihomo.disabled = !enabled;
                 copyMihomo.disabled = !enabled;
                 copyGroup.disabled = !enabled;
                 copyRule.disabled = !enabled;

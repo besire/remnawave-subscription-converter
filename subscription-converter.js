@@ -2,25 +2,75 @@
     'use strict';
 
     const SUPPORTED_PROTOCOLS = new Set(['vless', 'trojan', 'ss']);
+    const DEFAULT_GROUP_NAME = 'Remnawave';
 
     function convertShareLink(input, options = {}) {
         const raw = normalizeSingleInput(input);
+        return convertRawLinks([raw], options);
+    }
+
+    function convertShareLinks(input, options = {}) {
+        return convertRawLinks(normalizeMultipleInput(input), options);
+    }
+
+    function convertRawLinks(rawLinks, options = {}) {
         const overrides = normalizeOverrides(options);
-        const parsed = applyOverrides(parseShareLink(raw), overrides);
-        const mihomoProxy = toMihomoProxy(parsed);
-        const mihomoYaml = renderYamlList([mihomoProxy]);
-        const groupSnippet = renderGroupSnippet(mihomoProxy.name);
-        const ruleSnippet = renderRuleSnippet(mihomoProxy.name);
-        const xrayRaw = renderRawShareLink(raw, parsed, overrides);
+        const usedNames = new Map();
+        const items = rawLinks.map((raw, index) => {
+            const parsed = parseShareLink(raw);
+            const itemName = resolveItemName(parsed.name, overrides.name, index, rawLinks.length);
+            const withOverrides = applyOverrides(parsed, {
+                ...overrides,
+                name: itemName,
+            });
+            const uniqueName = ensureUniqueName(withOverrides.name, usedNames);
+            const finalParsed = { ...withOverrides, name: uniqueName.name };
+            const mihomoProxy = toMihomoProxy(finalParsed);
+            const rawNameOverride = overrides.name || uniqueName.changed ? finalParsed.name : '';
+            const xrayRaw = renderRawShareLink(raw, finalParsed, {
+                entryHost: overrides.entryHost,
+                name: rawNameOverride,
+            });
+
+            return {
+                raw,
+                parsed: finalParsed,
+                mihomoProxy,
+                xrayRaw,
+                warnings: [
+                    ...finalParsed.warnings,
+                    ...(uniqueName.changed ? [`节点名重复，已重命名为 ${uniqueName.name}。`] : []),
+                ],
+            };
+        });
+
+        const mihomoProxies = items.map((item) => item.mihomoProxy);
+        const proxyNames = mihomoProxies.map((proxy) => proxy.name);
+        const groupName = overrides.groupName;
+        const mihomoYaml = renderYamlList(mihomoProxies);
+        const groupSnippet = renderGroupSnippet(proxyNames, groupName);
+        const ruleSnippet = renderRuleSnippet(groupName);
+        const fullMihomoYaml = renderMergedMihomoConfig(
+            overrides.baseConfig,
+            mihomoProxies,
+            groupName,
+        );
+        const xrayRaw = items.map((item) => item.xrayRaw).join('\n');
+        const warnings = items.flatMap((item, index) =>
+            item.warnings.map((warning) => `第 ${index + 1} 条：${warning}`),
+        );
 
         return {
-            parsed,
-            mihomoProxy,
+            parsed: items[0].parsed,
+            mihomoProxy: items[0].mihomoProxy,
+            items,
+            groupName,
             mihomoYaml,
             groupSnippet,
             ruleSnippet,
+            fullMihomoYaml,
             xrayRaw,
-            warnings: parsed.warnings,
+            warnings,
         };
     }
 
@@ -29,6 +79,8 @@
         return {
             entryHost: normalizeHostOverride(source.entryHost),
             name: normalizeNameOverride(source.name),
+            groupName: normalizeGroupNameOverride(source.groupName),
+            baseConfig: normalizeBaseConfig(source.baseConfig),
         };
     }
 
@@ -58,6 +110,14 @@
     }
 
     function normalizeNameOverride(value) {
+        return String(value || '').trim();
+    }
+
+    function normalizeGroupNameOverride(value) {
+        return String(value || '').trim() || DEFAULT_GROUP_NAME;
+    }
+
+    function normalizeBaseConfig(value) {
         return String(value || '').trim();
     }
 
@@ -93,6 +153,42 @@
         }
 
         return lines[0];
+    }
+
+    function normalizeMultipleInput(input) {
+        const lines = String(input || '')
+            .split(/\r?\n/)
+            .map((line) => line.trim())
+            .filter(Boolean);
+
+        if (lines.length === 0) {
+            throw new Error('请至少粘贴一条代理分享链接。');
+        }
+
+        return lines;
+    }
+
+    function resolveItemName(originalName, overrideName, index, total) {
+        if (!overrideName) {
+            return originalName;
+        }
+
+        return total > 1 ? `${overrideName} ${index + 1}` : overrideName;
+    }
+
+    function ensureUniqueName(name, usedNames) {
+        const baseName = name || 'custom';
+        const currentCount = usedNames.get(baseName) || 0;
+        usedNames.set(baseName, currentCount + 1);
+
+        if (currentCount === 0) {
+            return { name: baseName, changed: false };
+        }
+
+        const uniqueName = `${baseName} ${currentCount + 1}`;
+        usedNames.set(uniqueName, 1);
+
+        return { name: uniqueName, changed: true };
     }
 
     function parseShareLink(raw) {
@@ -516,22 +612,320 @@
         }
     }
 
-    function renderGroupSnippet(proxyName) {
+    function renderGroupSnippet(proxyNames, groupName = DEFAULT_GROUP_NAME) {
+        const proxies = Array.isArray(proxyNames) ? proxyNames : [proxyNames];
+
         return renderYamlObject({
             'proxy-groups': [
                 {
-                    name: 'Remnawave',
+                    name: groupName,
                     type: 'select',
-                    proxies: [proxyName],
+                    proxies,
                 },
             ],
         });
     }
 
-    function renderRuleSnippet(groupName) {
+    function renderRuleSnippet(groupName = DEFAULT_GROUP_NAME) {
         return renderYamlObject({
             rules: [`MATCH,${groupName}`],
         });
+    }
+
+    function renderMihomoConfig(proxies, groupName = DEFAULT_GROUP_NAME) {
+        return renderYamlObject({
+            'mixed-port': 7890,
+            'socks-port': 7891,
+            'redir-port': 7892,
+            'allow-lan': true,
+            mode: 'global',
+            'log-level': 'info',
+            'external-controller': '127.0.0.1:9090',
+            dns: {
+                enable: true,
+                'use-hosts': true,
+                'enhanced-mode': 'fake-ip',
+                'fake-ip-range': '198.18.0.1/16',
+                'default-nameserver': ['1.1.1.1', '8.8.8.8'],
+                nameserver: ['1.1.1.1', '8.8.8.8'],
+                'fake-ip-filter': [
+                    '*.lan',
+                    'stun.*.*.*',
+                    'stun.*.*',
+                    'time.windows.com',
+                    'time.nist.gov',
+                    'time.apple.com',
+                    'time.asia.apple.com',
+                    '*.openwrt.pool.ntp.org',
+                    'pool.ntp.org',
+                    'ntp.ubuntu.com',
+                    'time1.apple.com',
+                    'time2.apple.com',
+                    'time3.apple.com',
+                    'time4.apple.com',
+                    'time5.apple.com',
+                    'time6.apple.com',
+                    'time7.apple.com',
+                    'time1.google.com',
+                    'time2.google.com',
+                    'time3.google.com',
+                    'time4.google.com',
+                    'api.joox.com',
+                    'joox.com',
+                    '*.xiami.com',
+                    '*.msftconnecttest.com',
+                    '*.msftncsi.com',
+                    '+.xboxlive.com',
+                    '*.*.stun.playstation.net',
+                    'xbox.*.*.microsoft.com',
+                    '*.ipv6.microsoft.com',
+                    'speedtest.cros.wr.pvp.net',
+                ],
+            },
+            proxies,
+            'proxy-groups': [
+                {
+                    name: groupName,
+                    type: 'select',
+                    proxies: proxies.map((proxy) => proxy.name),
+                },
+            ],
+            rules: [`MATCH,${groupName}`],
+        });
+    }
+
+    function renderMergedMihomoConfig(baseConfig, proxies, groupName = DEFAULT_GROUP_NAME) {
+        const cleanBaseConfig = normalizeBaseConfig(baseConfig);
+        if (!cleanBaseConfig) {
+            return renderMihomoConfig(proxies, groupName);
+        }
+
+        let mergedConfig = repairKnownGroupRuleMismatch(cleanBaseConfig, groupName);
+        mergedConfig = appendProxiesToConfig(mergedConfig, proxies);
+        mergedConfig = mergeProxyGroupIntoConfig(mergedConfig, proxies, groupName);
+        mergedConfig = ensureRuleInConfig(mergedConfig, groupName);
+
+        return mergedConfig.trim();
+    }
+
+    function repairKnownGroupRuleMismatch(config, groupName) {
+        if (groupName !== DEFAULT_GROUP_NAME) {
+            return config;
+        }
+
+        return config.replace(/MATCH,\s*→\s*Remnawave/g, `MATCH,${DEFAULT_GROUP_NAME}`);
+    }
+
+    function appendProxiesToConfig(config, proxies) {
+        return appendToTopLevelListSection(config, 'proxies', renderYamlList(proxies));
+    }
+
+    function mergeProxyGroupIntoConfig(config, proxies, groupName) {
+        const section = findTopLevelSection(config, 'proxy-groups');
+        if (!section) {
+            return appendToTopLevelListSection(
+                config,
+                'proxy-groups',
+                renderProxyGroupItem(proxies, groupName),
+            );
+        }
+
+        const lines = config.split('\n');
+        const group = findProxyGroup(lines, section, groupName);
+        if (!group) {
+            return insertLinesAt(
+                lines,
+                section.end,
+                splitLines(renderProxyGroupItem(proxies, groupName)),
+            );
+        }
+
+        const existingNames = collectProxyNamesFromGroup(lines, group);
+        const namesToInsert = proxies
+            .map((proxy) => proxy.name)
+            .filter((name) => !existingNames.has(name));
+
+        if (namesToInsert.length === 0) {
+            return config;
+        }
+
+        const insertIndex = group.proxiesEndIndex ?? group.end;
+        const indent = group.proxyItemIndent ?? '      ';
+        const linesToInsert = namesToInsert.map((name) => `${indent}- ${renderScalar(name)}`);
+
+        return insertLinesAt(lines, insertIndex, linesToInsert);
+    }
+
+    function ensureRuleInConfig(config, groupName) {
+        const rule = `MATCH,${groupName}`;
+        if (config.includes(rule)) {
+            return config;
+        }
+
+        return appendToTopLevelListSection(config, 'rules', `- ${renderScalar(rule)}`);
+    }
+
+    function appendToTopLevelListSection(config, sectionName, listYaml) {
+        const section = findTopLevelSection(config, sectionName);
+        if (!section) {
+            const separator = config.trim() ? '\n\n' : '';
+            return `${config.trimEnd()}${separator}${sectionName}:\n${listYaml}`;
+        }
+
+        const lines = config.split('\n');
+        return insertLinesAt(lines, section.end, splitLines(listYaml));
+    }
+
+    function renderProxyGroupItem(proxies, groupName) {
+        return renderYamlList([
+            {
+                name: groupName,
+                type: 'select',
+                proxies: proxies.map((proxy) => proxy.name),
+            },
+        ]);
+    }
+
+    function findTopLevelSection(config, sectionName) {
+        const lines = config.split('\n');
+        const sectionPattern = new RegExp(`^${escapeRegExp(sectionName)}\\s*:`);
+        let start = -1;
+
+        for (let index = 0; index < lines.length; index += 1) {
+            if (sectionPattern.test(lines[index])) {
+                start = index;
+                break;
+            }
+        }
+
+        if (start < 0) {
+            return null;
+        }
+
+        let end = lines.length;
+        for (let index = start + 1; index < lines.length; index += 1) {
+            if (/^[A-Za-z0-9_-][A-Za-z0-9_-]*\s*:/.test(lines[index])) {
+                end = index;
+                break;
+            }
+        }
+
+        return { start, end };
+    }
+
+    function findProxyGroup(lines, section, groupName) {
+        const quotedPattern = new RegExp(
+            '^\\s*-\\s+name:\\s*' + escapeRegExp(renderScalar(groupName)) + '\\s*$',
+        );
+        const barePattern = new RegExp(
+            '^\\s*-\\s+name:\\s*' + escapeRegExp(groupName) + '\\s*$',
+        );
+
+        for (let index = section.start + 1; index < section.end; index += 1) {
+            const line = lines[index];
+            if (!quotedPattern.test(line) && !barePattern.test(line)) {
+                continue;
+            }
+
+            let end = section.end;
+            for (let next = index + 1; next < section.end; next += 1) {
+                if (/^\s*-\s+name:/.test(lines[next])) {
+                    end = next;
+                    break;
+                }
+            }
+
+            const proxiesLineIndex = findNestedKeyLine(lines, index + 1, end, 'proxies');
+            if (proxiesLineIndex < 0) {
+                return { start: index, end, proxiesStartIndex: -1, proxiesEndIndex: end };
+            }
+
+            const proxiesEndIndex = findNestedListEnd(lines, proxiesLineIndex + 1, end);
+            const proxyItemIndent = inferListItemIndent(lines, proxiesLineIndex, proxiesEndIndex);
+
+            return {
+                start: index,
+                end,
+                proxiesStartIndex: proxiesLineIndex + 1,
+                proxiesEndIndex,
+                proxyItemIndent,
+            };
+        }
+
+        return null;
+    }
+
+    function findNestedKeyLine(lines, start, end, key) {
+        const keyPattern = new RegExp(`^\\s+${escapeRegExp(key)}\\s*:`);
+        for (let index = start; index < end; index += 1) {
+            if (keyPattern.test(lines[index])) {
+                return index;
+            }
+        }
+        return -1;
+    }
+
+    function findNestedListEnd(lines, start, end) {
+        for (let index = start; index < end; index += 1) {
+            if (/^\s{4}[A-Za-z0-9_-]+\s*:/.test(lines[index])) {
+                return index;
+            }
+        }
+        return end;
+    }
+
+    function inferListItemIndent(lines, proxiesLineIndex, proxiesEndIndex) {
+        for (let index = proxiesLineIndex + 1; index < proxiesEndIndex; index += 1) {
+            const match = lines[index].match(/^(\s*)-/);
+            if (match) {
+                return match[1];
+            }
+        }
+        return '      ';
+    }
+
+    function collectProxyNamesFromGroup(lines, group) {
+        const names = new Set();
+        if (group.proxiesStartIndex < 0 || group.proxiesEndIndex === undefined) {
+            return names;
+        }
+
+        for (let index = group.proxiesStartIndex; index < group.proxiesEndIndex; index += 1) {
+            const match = lines[index].match(/^\s*-\s*(.+?)\s*$/);
+            if (!match) {
+                continue;
+            }
+            names.add(unquoteYamlScalar(match[1]));
+        }
+
+        return names;
+    }
+
+    function insertLinesAt(lines, index, linesToInsert) {
+        const nextLines = [...lines];
+        nextLines.splice(index, 0, ...linesToInsert);
+        return nextLines.join('\n');
+    }
+
+    function splitLines(value) {
+        return String(value || '')
+            .split('\n')
+            .filter((line) => line.length > 0);
+    }
+
+    function unquoteYamlScalar(value) {
+        const trimmed = String(value || '').trim();
+        if (
+            (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+            (trimmed.startsWith("'") && trimmed.endsWith("'"))
+        ) {
+            return trimmed.slice(1, -1);
+        }
+        return trimmed;
+    }
+
+    function escapeRegExp(value) {
+        return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     }
 
     function renderYamlList(items) {
@@ -698,8 +1092,11 @@
 
     const api = {
         convertShareLink,
+        convertShareLinks,
         normalizeHostOverride,
         parseShareLink,
+        renderMergedMihomoConfig,
+        renderMihomoConfig,
         toMihomoProxy,
         renderYamlList,
         renderYamlObject,

@@ -20,7 +20,10 @@ assert.match(vlessResult.mihomoYaml, /ws-opts:/);
 assert.match(vlessResult.mihomoYaml, /max-early-data: 2048/);
 assert.match(vlessResult.mihomoYaml, /Host: "cdn.example.com"/);
 assert.match(vlessResult.ruleSnippet, /rules:/);
-assert.match(vlessResult.ruleSnippet, /MATCH,demo-vless/);
+assert.match(vlessResult.ruleSnippet, /MATCH,Remnawave/);
+assert.match(vlessResult.fullMihomoYaml, /proxy-groups:/);
+assert.match(vlessResult.fullMihomoYaml, /name: "Remnawave"/);
+assert.match(vlessResult.fullMihomoYaml, /MATCH,Remnawave/);
 
 const trojanResult = converter.convertShareLink(trojan);
 assert.match(trojanResult.mihomoYaml, /type: "trojan"/);
@@ -32,7 +35,7 @@ const ssResult = converter.convertShareLink(ss);
 assert.match(ssResult.mihomoYaml, /type: "ss"/);
 assert.match(ssResult.mihomoYaml, /cipher: "aes-256-gcm"/);
 assert.match(ssResult.mihomoYaml, /password: "password"/);
-assert.match(ssResult.ruleSnippet, /MATCH,demo-ss/);
+assert.match(ssResult.ruleSnippet, /MATCH,Remnawave/);
 
 const ssPlainResult = converter.convertShareLink(ssPlain);
 assert.match(ssPlainResult.mihomoYaml, /cipher: "chacha20-ietf-poly1305"/);
@@ -45,7 +48,7 @@ const ssOverrideResult = converter.convertShareLink(ss, {
 assert.match(ssOverrideResult.mihomoYaml, /server: "ss-entry.example.com"/);
 assert.match(ssOverrideResult.xrayRaw, /^ss:\/\/YWVzLTI1Ni1nY206cGFzc3dvcmQ@ss-entry\.example\.com:8388/);
 assert.match(ssOverrideResult.xrayRaw, /#ss-name$/);
-assert.match(ssOverrideResult.ruleSnippet, /MATCH,ss-name/);
+assert.match(ssOverrideResult.ruleSnippet, /MATCH,Remnawave/);
 
 const realityResult = converter.convertShareLink(reality);
 assert.match(realityResult.mihomoYaml, /servername: "www.example.com"/);
@@ -70,6 +73,58 @@ assert.match(overrideResult.mihomoYaml, /server: "edge.example.org"/);
 assert.match(overrideResult.groupSnippet, /- "专用节点"/);
 assert.match(overrideResult.xrayRaw, /^vless:\/\/11111111-1111-4111-8111-111111111111@edge\.example\.org:443/);
 assert.match(overrideResult.xrayRaw, /#%E4%B8%93%E7%94%A8%E8%8A%82%E7%82%B9$/);
+
+const batchResult = converter.convertShareLinks(`${vless}\n${trojan}\n${ss}`, {
+    entryHost: 'batch.example.com',
+    name: '批量节点',
+});
+assert.strictEqual(batchResult.items.length, 3);
+assert.match(batchResult.mihomoYaml, /name: "批量节点 1"/);
+assert.match(batchResult.mihomoYaml, /name: "批量节点 2"/);
+assert.match(batchResult.mihomoYaml, /name: "批量节点 3"/);
+assert.match(batchResult.mihomoYaml, /server: "batch.example.com"/);
+assert.match(batchResult.groupSnippet, /name: "Remnawave"/);
+assert.match(batchResult.groupSnippet, /- "批量节点 1"/);
+assert.match(batchResult.groupSnippet, /- "批量节点 2"/);
+assert.match(batchResult.groupSnippet, /- "批量节点 3"/);
+assert.match(batchResult.ruleSnippet, /MATCH,Remnawave/);
+assert.match(batchResult.fullMihomoYaml, /proxies:/);
+assert.match(batchResult.fullMihomoYaml, /proxy-groups:/);
+assert.match(batchResult.fullMihomoYaml, /rules:/);
+assert.match(batchResult.xrayRaw, /#%E6%89%B9%E9%87%8F%E8%8A%82%E7%82%B9%201/);
+assert.match(batchResult.xrayRaw, /#%E6%89%B9%E9%87%8F%E8%8A%82%E7%82%B9%202/);
+assert.match(batchResult.xrayRaw, /#%E6%89%B9%E9%87%8F%E8%8A%82%E7%82%B9%203/);
+
+const duplicateResult = converter.convertShareLinks(`${ssPlain}\n${ssPlain}`);
+assert.match(duplicateResult.mihomoYaml, /name: "plain-ss"/);
+assert.match(duplicateResult.mihomoYaml, /name: "plain-ss 2"/);
+assert.match(duplicateResult.warnings.join('\n'), /节点名重复/);
+
+const baseConfig = `mixed-port: 7890
+proxies:
+  - name: "old-node"
+    type: "ss"
+    server: "old.example.com"
+    port: 8388
+    cipher: "aes-128-gcm"
+    password: "old"
+proxy-groups:
+  - name: "Remnawave"
+    type: "select"
+    proxies:
+      - "old-node"
+rules:
+  - MATCH,→ Remnawave`;
+const mergedResult = converter.convertShareLinks(vless, {
+    baseConfig,
+    name: 'merged-node',
+});
+assert.match(mergedResult.fullMihomoYaml, /name: "old-node"/);
+assert.match(mergedResult.fullMihomoYaml, /name: "merged-node"/);
+assert.match(mergedResult.fullMihomoYaml, /- "old-node"/);
+assert.match(mergedResult.fullMihomoYaml, /- "merged-node"/);
+assert.doesNotMatch(mergedResult.fullMihomoYaml, /MATCH,→ Remnawave/);
+assert.match(mergedResult.fullMihomoYaml, /MATCH,Remnawave/);
 
 const ssLegacy = 'ss://YWVzLTI1Ni1nY206cGFzc3dvcmRAZXhhbXBsZS5vcmc6ODM4OA#legacy-ss';
 const ssLegacyOverride = converter.convertShareLink(ssLegacy, {
