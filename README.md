@@ -8,6 +8,7 @@
 - `trojan://...`
 - `ss://...`
 - Xray WireGuard outbound JSON，或包含 WireGuard outbound 的完整 Xray JSON 配置
+- Xray WireGuard inbound JSON，或包含 WireGuard inbound 的完整 Xray JSON 配置
 
 工具只在浏览器本地解析，不会请求后端，也不会上传你的链接。
 
@@ -21,13 +22,15 @@
 - 入口端口：填写后会替换原始链接里的端口，并同步修改 Mihomo YAML 的 `port` 字段。留空则不改变。
 - 节点名称：单条时覆盖 Mihomo YAML 的 `name` 字段；多条时作为名称前缀自动追加序号。留空则使用原始名称。
 - 每条链接单独设置：粘贴链接后可以展开每一条的下拉设置，单独覆盖入口 IP / 域名、入口端口和节点名称；单独设置优先于上面的全局设置。
+- WireGuard 服务端配置补充：当输入是 Xray `inbounds` 里的 WireGuard 服务端配置时，填写客户端私钥、服务端公钥、客户端地址和可选预共享密钥。
 - 当前 Mihomo 配置：填写后会在现有配置基础上追加新节点、代理组引用和规则；留空则生成新的基础配置。
 
 WireGuard 说明：
 
 - WireGuard 没有像 `vless://` 那样统一通用的分享链接格式。
-- 本工具支持从 Xray 的 `protocol: "wireguard"` outbound 转成 Mihomo `type: wireguard` 节点。
-- 主要映射：`settings.secretKey` -> `private-key`，`settings.address` -> `ip` / `ipv6`，`settings.peers` -> `server` / `port` / `public-key` / `allowed-ips`。
+- Xray WireGuard outbound 是客户端配置，可以直接转成 Mihomo `type: wireguard` 节点。主要映射：`settings.secretKey` -> `private-key`，`settings.address` -> `ip` / `ipv6`，`settings.peers` -> `server` / `port` / `public-key` / `allowed-ips`。
+- Xray WireGuard inbound 是服务端配置，不包含 Mihomo 客户端所需的客户端私钥、服务端公钥和客户端地址。工具会要求你在页面的 WireGuard 补充区填写这些字段，并使用入口 IP / 域名与入口端口作为 Mihomo 的 `server` / `port`。
+- Xray inbound 的 `settings.secretKey` 是服务端私钥，工具不会把它写入 Mihomo `private-key`。
 - Xray 的 `noKernelTun`、`domainStrategy` 属于 Xray 运行时选项，不会写入 Mihomo 节点；工具会在警告里提示。
 
 生成结果：

@@ -7,6 +7,7 @@
         '10.0.0.1/32',
         'fd59:7153:2388:b5fd:0000:0000:0000:0001/128',
     ];
+    const DEFAULT_WIREGUARD_ALLOWED_IPS = ['0.0.0.0/0', '::/0'];
 
     function convertShareLink(input, options = {}) {
         const raw = normalizeSingleInput(input);
@@ -29,6 +30,10 @@
                 entryHost: itemOverride.entryHost || overrides.entryHost,
                 entryPort: itemOverride.entryPort || overrides.entryPort,
                 name: itemName,
+                wireGuardClientPrivateKey: overrides.wireGuardClientPrivateKey,
+                wireGuardServerPublicKey: overrides.wireGuardServerPublicKey,
+                wireGuardClientAddresses: overrides.wireGuardClientAddresses,
+                wireGuardPreSharedKey: overrides.wireGuardPreSharedKey,
             });
             const uniqueName = ensureUniqueName(withOverrides.name, usedNames);
             const finalParsed = { ...withOverrides, name: uniqueName.name };
@@ -92,6 +97,10 @@
             groupName: normalizeGroupNameOverride(source.groupName),
             baseConfig: normalizeBaseConfig(source.baseConfig),
             itemOverrides: normalizeItemOverrides(source.itemOverrides),
+            wireGuardClientPrivateKey: normalizeNameOverride(source.wireGuardClientPrivateKey),
+            wireGuardServerPublicKey: normalizeNameOverride(source.wireGuardServerPublicKey),
+            wireGuardClientAddresses: normalizeWireGuardAddressOverride(source.wireGuardClientAddress),
+            wireGuardPreSharedKey: normalizeNameOverride(source.wireGuardPreSharedKey),
         };
     }
 
@@ -150,6 +159,17 @@
         return String(value || '').trim();
     }
 
+    function normalizeWireGuardAddressOverride(value) {
+        if (Array.isArray(value)) {
+            return value.map((item) => String(item || '').trim()).filter(Boolean);
+        }
+
+        return String(value || '')
+            .split(',')
+            .map((item) => item.trim())
+            .filter(Boolean);
+    }
+
     function normalizeItemOverrides(value) {
         if (!Array.isArray(value)) {
             return [];
@@ -187,6 +207,7 @@
             next.name = overrides.name;
         }
         applyWireGuardEndpointOverride(next, overrides);
+        applyWireGuardClientOverrides(next, overrides);
 
         return next;
     }
@@ -199,6 +220,15 @@
         return {
             ...config,
             reserved: Array.isArray(config.reserved) ? [...config.reserved] : config.reserved,
+            clientAddresses: Array.isArray(config.clientAddresses)
+                ? [...config.clientAddresses]
+                : config.clientAddresses,
+            inboundPeers: Array.isArray(config.inboundPeers)
+                ? config.inboundPeers.map((peer) => ({
+                      ...peer,
+                      allowedIPs: Array.isArray(peer.allowedIPs) ? [...peer.allowedIPs] : peer.allowedIPs,
+                  }))
+                : [],
             peers: Array.isArray(config.peers)
                 ? config.peers.map((peer) => ({
                       ...peer,
@@ -209,7 +239,11 @@
     }
 
     function applyWireGuardEndpointOverride(parsed, overrides) {
-        if (parsed.protocol !== 'wireguard' || !parsed.wireguard?.peers?.length) {
+        if (
+            parsed.protocol !== 'wireguard' ||
+            parsed.wireguard?.source !== 'xray-outbound' ||
+            !parsed.wireguard?.peers?.length
+        ) {
             return;
         }
 
@@ -226,6 +260,25 @@
         }
         if (parsed.wireguard.peers.length > 1) {
             parsed.warnings.push('WireGuard 多 peer 配置仅对第一个 peer 应用入口覆盖。');
+        }
+    }
+
+    function applyWireGuardClientOverrides(parsed, overrides) {
+        if (parsed.protocol !== 'wireguard' || parsed.wireguard?.source !== 'xray-inbound') {
+            return;
+        }
+
+        if (overrides.wireGuardClientPrivateKey) {
+            parsed.wireguard.clientPrivateKey = overrides.wireGuardClientPrivateKey;
+        }
+        if (overrides.wireGuardServerPublicKey) {
+            parsed.wireguard.serverPublicKey = overrides.wireGuardServerPublicKey;
+        }
+        if (overrides.wireGuardClientAddresses?.length > 0) {
+            parsed.wireguard.clientAddresses = [...overrides.wireGuardClientAddresses];
+        }
+        if (overrides.wireGuardPreSharedKey) {
+            parsed.wireguard.preSharedKey = overrides.wireGuardPreSharedKey;
         }
     }
 
@@ -367,12 +420,21 @@
         }
 
         const outbound = findXrayWireGuardOutbound(config);
-        if (!outbound) {
-            throw new Error('未找到 Xray WireGuard outbound。');
+        if (outbound) {
+            return parseXrayWireGuardOutbound(outbound);
         }
 
+        const inbound = findXrayWireGuardInbound(config);
+        if (inbound) {
+            return parseXrayWireGuardInbound(inbound);
+        }
+
+        throw new Error('未找到 Xray WireGuard inbound 或 outbound。');
+    }
+
+    function parseXrayWireGuardOutbound(outbound) {
         const settings = isPlainObject(outbound.settings) ? outbound.settings : {};
-        const peers = normalizeXrayWireGuardPeers(settings.peers);
+        const peers = normalizeXrayWireGuardOutboundPeers(settings.peers);
         const firstPeer = peers[0];
         const name = normalizeNameOverride(outbound.tag) || 'wireguard-custom';
         const addresses = normalizeStringArray(settings.address);
@@ -395,6 +457,7 @@
             host: firstPeer.server,
             port: firstPeer.port,
             wireguard: {
+                source: 'xray-outbound',
                 privateKey: normalizeRequiredString(settings.secretKey, '缺少 WireGuard secretKey。'),
                 addresses: addresses.length > 0 ? addresses : XRAY_WIREGUARD_DEFAULT_ADDRESSES,
                 peers,
@@ -407,8 +470,68 @@
         };
     }
 
+    function parseXrayWireGuardInbound(inbound) {
+        const settings = isPlainObject(inbound.settings) ? inbound.settings : {};
+        const inboundPeers = normalizeXrayWireGuardInboundPeers(settings.peers);
+        const addresses = normalizeStringArray(settings.address);
+        const listenHost = normalizeInboundListenHost(inbound.listen);
+        const port = parsePort(inbound.port);
+        const name = normalizeNameOverride(inbound.tag) || 'wireguard-inbound';
+        const inboundPreSharedKeys = uniqueNonEmptyValues(inboundPeers.map((peer) => peer.preSharedKey));
+        const warnings = [
+            '检测到 Xray WireGuard inbound（服务端配置），需要补充客户端私钥、服务端公钥、客户端地址和入口地址后才能生成 Mihomo 客户端节点。',
+        ];
+
+        if (settings.secretKey) {
+            warnings.push('Xray inbound 的 secretKey 是服务端私钥，不会写入 Mihomo private-key。');
+        }
+        if (settings.noKernelTun !== undefined) {
+            warnings.push('Xray noKernelTun 是运行时选项，Mihomo 节点中不会输出。');
+        }
+        if (settings.domainStrategy) {
+            warnings.push('Xray domainStrategy 没有一一对应的 Mihomo 节点字段，已忽略。');
+        }
+        if (addresses.length > 0) {
+            warnings.push('Xray inbound 的 address 属于服务端接口地址，不会作为 Mihomo 客户端 ip 自动使用。');
+        }
+        if (!port) {
+            warnings.push('Xray inbound 未提供有效 port，请在入口端口里填写服务端监听端口。');
+        }
+        if (listenHost) {
+            warnings.push('Xray inbound 的 listen 通常是本机监听地址；Mihomo 连接入口仍建议手工填写公网 IP 或域名。');
+        }
+        if (inboundPreSharedKeys.length > 1) {
+            warnings.push('Xray inbound 有多个不同的 peer preSharedKey，请在补充区填写当前客户端对应的预共享密钥。');
+        }
+
+        return {
+            protocol: 'wireguard',
+            format: 'xray-inbound-json',
+            name,
+            host: '',
+            port,
+            wireguard: {
+                source: 'xray-inbound',
+                clientPrivateKey: '',
+                serverPublicKey: '',
+                clientAddresses: [],
+                preSharedKey: inboundPreSharedKeys.length === 1 ? inboundPreSharedKeys[0] : '',
+                inboundPeers,
+                peers: [],
+                mtu: normalizeOptionalInteger(settings.mtu, 'mtu'),
+                workers: normalizeOptionalInteger(settings.workers, 'workers'),
+            },
+            params: {},
+            warnings,
+        };
+    }
+
     function findXrayWireGuardOutbound(config) {
-        if (isPlainObject(config) && isXrayWireGuardOutbound(config)) {
+        if (
+            isPlainObject(config) &&
+            isXrayWireGuard(config) &&
+            !isStandaloneXrayWireGuardInbound(config)
+        ) {
             return config;
         }
 
@@ -417,22 +540,65 @@
             return null;
         }
 
-        return outbounds.find((item) => isPlainObject(item) && isXrayWireGuardOutbound(item)) || null;
+        return (
+            outbounds.find(
+                (item) => isPlainObject(item) && isXrayWireGuard(item) && !isStandaloneXrayWireGuardInbound(item),
+            ) || null
+        );
     }
 
-    function isXrayWireGuardOutbound(outbound) {
-        return String(outbound.protocol || '').toLowerCase() === 'wireguard';
+    function findXrayWireGuardInbound(config) {
+        if (
+            isPlainObject(config) &&
+            isXrayWireGuard(config) &&
+            isStandaloneXrayWireGuardInbound(config)
+        ) {
+            return config;
+        }
+
+        const inbounds = isPlainObject(config) ? config.inbounds : Array.isArray(config) ? config : [];
+        if (!Array.isArray(inbounds)) {
+            return null;
+        }
+
+        return inbounds.find((item) => isPlainObject(item) && isXrayWireGuard(item)) || null;
     }
 
-    function normalizeXrayWireGuardPeers(value) {
+    function isXrayWireGuard(config) {
+        return String(config.protocol || '').toLowerCase() === 'wireguard';
+    }
+
+    function isStandaloneXrayWireGuardInbound(config) {
+        if (!isXrayWireGuard(config)) {
+            return false;
+        }
+
+        if (
+            Object.prototype.hasOwnProperty.call(config, 'port') ||
+            Object.prototype.hasOwnProperty.call(config, 'listen') ||
+            Object.prototype.hasOwnProperty.call(config, 'allocate') ||
+            Object.prototype.hasOwnProperty.call(config, 'sniffing')
+        ) {
+            return true;
+        }
+
+        const peers = isPlainObject(config.settings) ? config.settings.peers : [];
+        return (
+            Array.isArray(peers) &&
+            peers.length > 0 &&
+            peers.every((peer) => isPlainObject(peer) && !normalizeNameOverride(peer.endpoint))
+        );
+    }
+
+    function normalizeXrayWireGuardOutboundPeers(value) {
         if (!Array.isArray(value) || value.length === 0) {
             throw new Error('WireGuard peers 至少需要一项。');
         }
 
-        return value.map((peer, index) => normalizeXrayWireGuardPeer(peer, index));
+        return value.map((peer, index) => normalizeXrayWireGuardOutboundPeer(peer, index));
     }
 
-    function normalizeXrayWireGuardPeer(peer, index) {
+    function normalizeXrayWireGuardOutboundPeer(peer, index) {
         const source = isPlainObject(peer) ? peer : {};
         const endpoint = normalizeRequiredString(source.endpoint, `WireGuard peer ${index + 1} 缺少 endpoint。`);
         const server = splitHostPort(endpoint);
@@ -443,8 +609,31 @@
             publicKey: normalizeRequiredString(source.publicKey, `WireGuard peer ${index + 1} 缺少 publicKey。`),
             preSharedKey: normalizeNameOverride(source.preSharedKey),
             keepAlive: normalizeOptionalInteger(source.keepAlive, 'keepAlive'),
-            allowedIPs: allowedIPs.length > 0 ? allowedIPs : ['0.0.0.0/0', '::/0'],
+            allowedIPs: allowedIPs.length > 0 ? allowedIPs : DEFAULT_WIREGUARD_ALLOWED_IPS,
         };
+    }
+
+    function normalizeXrayWireGuardInboundPeers(value) {
+        if (!Array.isArray(value) || value.length === 0) {
+            throw new Error('WireGuard peers 至少需要一项。');
+        }
+
+        return value.map((peer, index) => normalizeXrayWireGuardInboundPeer(peer, index));
+    }
+
+    function normalizeXrayWireGuardInboundPeer(peer, index) {
+        const source = isPlainObject(peer) ? peer : {};
+        const allowedIPs = normalizeStringArray(source.allowedIPs);
+        return {
+            publicKey: normalizeRequiredString(source.publicKey, `WireGuard inbound peer ${index + 1} 缺少 publicKey。`),
+            preSharedKey: normalizeNameOverride(source.preSharedKey),
+            allowedIPs,
+        };
+    }
+
+    function normalizeInboundListenHost(value) {
+        const text = String(value || '').trim();
+        return text === '0.0.0.0' || text === '::' || text === '[::]' ? '' : stripIpv6Brackets(text);
     }
 
     function normalizeStringArray(value) {
@@ -462,6 +651,20 @@
             throw new Error(message);
         }
         return text;
+    }
+
+    function uniqueNonEmptyValues(values) {
+        const result = [];
+        const seen = new Set();
+        for (const value of values) {
+            const text = normalizeNameOverride(value);
+            if (text && !seen.has(text)) {
+                seen.add(text);
+                result.push(text);
+            }
+        }
+
+        return result;
     }
 
     function normalizeOptionalInteger(value, fieldName) {
@@ -668,6 +871,10 @@
 
     function toMihomoWireGuardProxy(parsed) {
         const config = parsed.wireguard;
+        if (config.source === 'xray-inbound') {
+            return toMihomoWireGuardInboundProxy(parsed);
+        }
+
         const addressFields = splitWireGuardAddresses(config.addresses);
         const firstPeer = config.peers[0];
         const node = {
@@ -710,6 +917,60 @@
             delete node['pre-shared-key'];
             delete node['allowed-ips'];
         }
+
+        return node;
+    }
+
+    function toMihomoWireGuardInboundProxy(parsed) {
+        const config = parsed.wireguard;
+        const missing = [];
+        if (!parsed.host) {
+            missing.push('入口 IP / 域名');
+        }
+        if (!parsed.port) {
+            missing.push('入口端口');
+        }
+        if (!config.clientPrivateKey) {
+            missing.push('WG 客户端私钥');
+        }
+        if (!config.serverPublicKey) {
+            missing.push('WG 服务端公钥');
+        }
+        if (!config.clientAddresses?.length) {
+            missing.push('WG 客户端地址');
+        }
+
+        if (missing.length > 0) {
+            throw new Error(`Xray WireGuard inbound 是服务端配置，缺少：${missing.join('、')}。`);
+        }
+
+        const addressFields = splitWireGuardAddresses(config.clientAddresses);
+        const node = {
+            name: parsed.name,
+            type: 'wireguard',
+            server: parsed.host,
+            port: parsed.port,
+            ip: addressFields.ip,
+            'private-key': config.clientPrivateKey,
+            'public-key': config.serverPublicKey,
+            'allowed-ips': DEFAULT_WIREGUARD_ALLOWED_IPS,
+            udp: true,
+        };
+
+        if (addressFields.ipv6) {
+            node.ipv6 = addressFields.ipv6;
+        }
+        if (config.preSharedKey) {
+            node['pre-shared-key'] = config.preSharedKey;
+        }
+        if (config.mtu) {
+            node.mtu = config.mtu;
+        }
+        if (config.workers) {
+            node.workers = config.workers;
+        }
+
+        parsed.warnings.push('已按 Xray WireGuard inbound 生成 Mihomo 客户端节点，请确认 WG 客户端私钥对应服务端 peers 中的 publicKey。');
 
         return node;
     }

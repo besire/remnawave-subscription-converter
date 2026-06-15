@@ -32,6 +32,22 @@ const xrayWireGuardOutbound = `{
     ]
   }
 }`;
+const xrayWireGuardInbound = `{
+  "tag": "home-wg",
+  "port": 51820,
+  "protocol": "wireguard",
+  "settings": {
+    "secretKey": "SERVER_PRIVATE_KEY",
+    "mtu": 1420,
+    "peers": [
+      {
+        "publicKey": "CLIENT_PUBLIC_KEY",
+        "preSharedKey": "PRE_SHARED_KEY",
+        "allowedIPs": ["172.16.0.2/32"]
+      }
+    ]
+  }
+}`;
 
 const vlessResult = converter.convertShareLink(vless);
 assert.match(vlessResult.mihomoYaml, /type: "vless"/);
@@ -141,6 +157,79 @@ assert.match(wireGuardMultiPeerResult.mihomoYaml, /peers:/);
 assert.match(wireGuardMultiPeerResult.mihomoYaml, /server: "peer-a.example.com"/);
 assert.match(wireGuardMultiPeerResult.mihomoYaml, /server: "peer-b.example.com"/);
 assert.match(wireGuardMultiPeerResult.mihomoYaml, /persistent-keepalive: 15/);
+
+assert.throws(
+    () => converter.convertShareLink(xrayWireGuardInbound),
+    /Xray WireGuard inbound 是服务端配置，缺少：入口 IP \/ 域名、WG 客户端私钥、WG 服务端公钥、WG 客户端地址/,
+);
+
+const wireGuardInboundResult = converter.convertShareLink(xrayWireGuardInbound, {
+    entryHost: 'wg.example.com',
+    wireGuardClientPrivateKey: 'CLIENT_PRIVATE_KEY',
+    wireGuardServerPublicKey: 'SERVER_PUBLIC_KEY',
+    wireGuardClientAddress: '172.16.0.2/32,fd00::2/128',
+});
+assert.match(wireGuardInboundResult.mihomoYaml, /name: "home-wg"/);
+assert.match(wireGuardInboundResult.mihomoYaml, /type: "wireguard"/);
+assert.match(wireGuardInboundResult.mihomoYaml, /server: "wg.example.com"/);
+assert.match(wireGuardInboundResult.mihomoYaml, /port: 51820/);
+assert.match(wireGuardInboundResult.mihomoYaml, /ip: "172.16.0.2\/32"/);
+assert.match(wireGuardInboundResult.mihomoYaml, /ipv6: "fd00::2\/128"/);
+assert.match(wireGuardInboundResult.mihomoYaml, /private-key: "CLIENT_PRIVATE_KEY"/);
+assert.match(wireGuardInboundResult.mihomoYaml, /public-key: "SERVER_PUBLIC_KEY"/);
+assert.match(wireGuardInboundResult.mihomoYaml, /pre-shared-key: "PRE_SHARED_KEY"/);
+assert.doesNotMatch(wireGuardInboundResult.mihomoYaml, /SERVER_PRIVATE_KEY/);
+assert.match(wireGuardInboundResult.warnings.join('\n'), /inbound/);
+assert.match(wireGuardInboundResult.warnings.join('\n'), /客户端私钥对应服务端 peers/);
+
+const xrayFullInboundConfig = JSON.stringify({
+    inbounds: [
+        {
+            tag: 'api',
+            protocol: 'dokodemo-door',
+            port: 10085,
+        },
+        JSON.parse(xrayWireGuardInbound),
+    ],
+});
+const wireGuardFullInboundResult = converter.convertShareLink(xrayFullInboundConfig, {
+    entryHost: '203.0.113.9',
+    entryPort: 51821,
+    wireGuardClientPrivateKey: 'CLIENT_PRIVATE_KEY',
+    wireGuardServerPublicKey: 'SERVER_PUBLIC_KEY',
+    wireGuardClientAddress: '172.16.0.2/32',
+    wireGuardPreSharedKey: 'OVERRIDE_PRE_SHARED_KEY',
+});
+assert.match(wireGuardFullInboundResult.mihomoYaml, /server: "203.0.113.9"/);
+assert.match(wireGuardFullInboundResult.mihomoYaml, /port: 51821/);
+assert.match(wireGuardFullInboundResult.mihomoYaml, /pre-shared-key: "OVERRIDE_PRE_SHARED_KEY"/);
+
+const xrayInboundWithDifferentPreSharedKeys = JSON.stringify({
+    tag: 'multi-client-wg',
+    protocol: 'wireguard',
+    port: 51820,
+    settings: {
+        secretKey: 'SERVER_PRIVATE_KEY',
+        peers: [
+            {
+                publicKey: 'CLIENT_PUBLIC_KEY_A',
+                preSharedKey: 'PRE_SHARED_KEY_A',
+            },
+            {
+                publicKey: 'CLIENT_PUBLIC_KEY_B',
+                preSharedKey: 'PRE_SHARED_KEY_B',
+            },
+        ],
+    },
+});
+const wireGuardDifferentPskResult = converter.convertShareLink(xrayInboundWithDifferentPreSharedKeys, {
+    entryHost: 'wg.example.com',
+    wireGuardClientPrivateKey: 'CLIENT_PRIVATE_KEY',
+    wireGuardServerPublicKey: 'SERVER_PUBLIC_KEY',
+    wireGuardClientAddress: '172.16.0.3/32',
+});
+assert.doesNotMatch(wireGuardDifferentPskResult.mihomoYaml, /pre-shared-key/);
+assert.match(wireGuardDifferentPskResult.warnings.join('\n'), /多个不同的 peer preSharedKey/);
 
 assert.strictEqual(vlessResult.xrayRaw, vless);
 

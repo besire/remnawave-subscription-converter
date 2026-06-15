@@ -273,8 +273,49 @@
                 padding: 0 16px 16px;
             }
 
+            .wireguard-extra,
             .base-config {
                 margin-top: 16px;
+            }
+
+            .wireguard-extra {
+                border: 1px solid var(--hairline);
+                border-radius: 18px;
+                background: var(--canvas);
+                overflow: hidden;
+            }
+
+            .wireguard-extra summary {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 12px;
+                min-height: 48px;
+                padding: 12px 16px;
+                cursor: pointer;
+                color: var(--ink);
+                font-size: 14px;
+                font-weight: 600;
+            }
+
+            .wireguard-extra summary:focus-visible {
+                outline: 2px solid var(--primary-focus);
+                outline-offset: -2px;
+            }
+
+            .wireguard-extra summary span {
+                min-width: 0;
+                color: var(--soft-muted);
+                font-size: 12px;
+                font-weight: 400;
+                line-height: 1.33;
+            }
+
+            .wireguard-grid {
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 16px;
+                padding: 0 16px 16px;
             }
 
             .base-config textarea {
@@ -480,7 +521,8 @@
 
                 .meta,
                 .options,
-                .item-override-body {
+                .item-override-body,
+                .wireguard-grid {
                     grid-template-columns: 1fr;
                 }
 
@@ -524,7 +566,7 @@
                         <textarea
                             id="shareLink"
                             spellcheck="false"
-                            placeholder="每行一条分享链接，或粘贴 Xray WireGuard outbound / 完整 JSON 配置"
+                            placeholder="每行一条分享链接，或粘贴 Xray WireGuard inbound / outbound / 完整 JSON 配置"
                         ></textarea>
 
                         <div class="options">
@@ -563,6 +605,55 @@
                         </div>
 
                         <div id="itemOverrides" class="item-overrides"></div>
+
+                        <details class="wireguard-extra">
+                            <summary>
+                                WireGuard 服务端配置补充
+                                <span>Xray inbound 需要这些客户端侧参数</span>
+                            </summary>
+                            <div class="wireguard-grid">
+                                <div>
+                                    <label for="wireGuardClientPrivateKey">WG 客户端私钥</label>
+                                    <input
+                                        id="wireGuardClientPrivateKey"
+                                        type="text"
+                                        spellcheck="false"
+                                        placeholder="写入 Mihomo private-key"
+                                    />
+                                    <div class="hint">必须对应服务端 peers 里的客户端 publicKey。</div>
+                                </div>
+                                <div>
+                                    <label for="wireGuardServerPublicKey">WG 服务端公钥</label>
+                                    <input
+                                        id="wireGuardServerPublicKey"
+                                        type="text"
+                                        spellcheck="false"
+                                        placeholder="写入 Mihomo public-key"
+                                    />
+                                    <div class="hint">Xray inbound 的 secretKey 是服务端私钥，不能直接填这里。</div>
+                                </div>
+                                <div>
+                                    <label for="wireGuardClientAddress">WG 客户端地址</label>
+                                    <input
+                                        id="wireGuardClientAddress"
+                                        type="text"
+                                        spellcheck="false"
+                                        placeholder="例如 172.16.0.2/32,fd00::2/128"
+                                    />
+                                    <div class="hint">多个地址用英文逗号分隔。</div>
+                                </div>
+                                <div>
+                                    <label for="wireGuardPreSharedKey">WG 预共享密钥</label>
+                                    <input
+                                        id="wireGuardPreSharedKey"
+                                        type="text"
+                                        spellcheck="false"
+                                        placeholder="可选，留空则使用 inbound peer 配置"
+                                    />
+                                    <div class="hint">服务端未配置 preSharedKey 时留空。</div>
+                                </div>
+                            </div>
+                        </details>
 
                         <div class="base-config">
                             <label for="baseConfig">当前 Mihomo 配置</label>
@@ -635,6 +726,10 @@
             const entryHostInput = document.getElementById('entryHost');
             const entryPortInput = document.getElementById('entryPort');
             const nodeNameInput = document.getElementById('nodeName');
+            const wireGuardClientPrivateKeyInput = document.getElementById('wireGuardClientPrivateKey');
+            const wireGuardServerPublicKeyInput = document.getElementById('wireGuardServerPublicKey');
+            const wireGuardClientAddressInput = document.getElementById('wireGuardClientAddress');
+            const wireGuardPreSharedKeyInput = document.getElementById('wireGuardPreSharedKey');
             const itemOverridesEl = document.getElementById('itemOverrides');
             const statusEl = document.getElementById('status');
             const metaEl = document.getElementById('meta');
@@ -670,6 +765,10 @@
             entryHostInput.addEventListener('input', convertIfReady);
             entryPortInput.addEventListener('input', convertIfReady);
             nodeNameInput.addEventListener('input', convertIfReady);
+            wireGuardClientPrivateKeyInput.addEventListener('input', convertIfReady);
+            wireGuardServerPublicKeyInput.addEventListener('input', convertIfReady);
+            wireGuardClientAddressInput.addEventListener('input', convertIfReady);
+            wireGuardPreSharedKeyInput.addEventListener('input', convertIfReady);
             baseConfigInput.addEventListener('input', convertIfReady);
 
             function convert() {
@@ -679,6 +778,10 @@
                         entryPort: entryPortInput.value,
                         name: nodeNameInput.value,
                         baseConfig: baseConfigInput.value,
+                        wireGuardClientPrivateKey: wireGuardClientPrivateKeyInput.value,
+                        wireGuardServerPublicKey: wireGuardServerPublicKeyInput.value,
+                        wireGuardClientAddress: wireGuardClientAddressInput.value,
+                        wireGuardPreSharedKey: wireGuardPreSharedKeyInput.value,
                         itemOverrides: collectItemOverrides(),
                     });
                     lastResult = result;
@@ -825,6 +928,10 @@
                 entryHostInput.value = '';
                 entryPortInput.value = '';
                 nodeNameInput.value = '';
+                wireGuardClientPrivateKeyInput.value = '';
+                wireGuardServerPublicKeyInput.value = '';
+                wireGuardClientAddressInput.value = '';
+                wireGuardPreSharedKeyInput.value = '';
                 itemOverrideState = [];
                 itemOverridesEl.innerHTML = '';
                 itemOverridesEl.classList.remove('visible');
