@@ -3,6 +3,10 @@
 
     const SUPPORTED_PROTOCOLS = new Set(['vless', 'trojan', 'ss']);
     const DEFAULT_GROUP_NAME = 'Remnawave';
+    const XRAY_WIREGUARD_DEFAULT_ADDRESSES = [
+        '10.0.0.1/32',
+        'fd59:7153:2388:b5fd:0000:0000:0000:0001/128',
+    ];
 
     function convertShareLink(input, options = {}) {
         const raw = normalizeSingleInput(input);
@@ -169,6 +173,7 @@
         const next = {
             ...parsed,
             params: { ...parsed.params },
+            wireguard: cloneWireGuardConfig(parsed.wireguard),
             warnings: [...parsed.warnings],
         };
 
@@ -181,11 +186,55 @@
         if (overrides.name) {
             next.name = overrides.name;
         }
+        applyWireGuardEndpointOverride(next, overrides);
 
         return next;
     }
 
+    function cloneWireGuardConfig(config) {
+        if (!config) {
+            return config;
+        }
+
+        return {
+            ...config,
+            reserved: Array.isArray(config.reserved) ? [...config.reserved] : config.reserved,
+            peers: Array.isArray(config.peers)
+                ? config.peers.map((peer) => ({
+                      ...peer,
+                      allowedIPs: Array.isArray(peer.allowedIPs) ? [...peer.allowedIPs] : peer.allowedIPs,
+                  }))
+                : [],
+        };
+    }
+
+    function applyWireGuardEndpointOverride(parsed, overrides) {
+        if (parsed.protocol !== 'wireguard' || !parsed.wireguard?.peers?.length) {
+            return;
+        }
+
+        if (!overrides.entryHost && !overrides.entryPort) {
+            return;
+        }
+
+        const firstPeer = parsed.wireguard.peers[0];
+        if (overrides.entryHost) {
+            firstPeer.server = parsed.host;
+        }
+        if (overrides.entryPort) {
+            firstPeer.port = parsed.port;
+        }
+        if (parsed.wireguard.peers.length > 1) {
+            parsed.warnings.push('WireGuard 多 peer 配置仅对第一个 peer 应用入口覆盖。');
+        }
+    }
+
     function normalizeSingleInput(input) {
+        const trimmed = String(input || '').trim();
+        if (looksLikeJsonInput(trimmed)) {
+            return trimmed;
+        }
+
         const lines = String(input || '')
             .split(/\r?\n/)
             .map((line) => line.trim())
@@ -203,6 +252,11 @@
     }
 
     function normalizeMultipleInput(input) {
+        const trimmed = String(input || '').trim();
+        if (looksLikeJsonInput(trimmed)) {
+            return [trimmed];
+        }
+
         const lines = String(input || '')
             .split(/\r?\n/)
             .map((line) => line.trim())
@@ -213,6 +267,11 @@
         }
 
         return lines;
+    }
+
+    function looksLikeJsonInput(input) {
+        const trimmed = String(input || '').trim();
+        return trimmed.startsWith('{') || trimmed.startsWith('[');
     }
 
     function resolveItemName(originalName, overrideName, index, total) {
@@ -239,6 +298,10 @@
     }
 
     function parseShareLink(raw) {
+        if (looksLikeJsonInput(raw)) {
+            return parseXrayWireGuardJson(raw);
+        }
+
         const protocol = getProtocol(raw);
 
         if (!SUPPORTED_PROTOCOLS.has(protocol)) {
@@ -293,6 +356,151 @@
             params,
             warnings,
         };
+    }
+
+    function parseXrayWireGuardJson(raw) {
+        let config;
+        try {
+            config = JSON.parse(raw);
+        } catch {
+            throw new Error('Xray JSON 格式不正确。');
+        }
+
+        const outbound = findXrayWireGuardOutbound(config);
+        if (!outbound) {
+            throw new Error('未找到 Xray WireGuard outbound。');
+        }
+
+        const settings = isPlainObject(outbound.settings) ? outbound.settings : {};
+        const peers = normalizeXrayWireGuardPeers(settings.peers);
+        const firstPeer = peers[0];
+        const name = normalizeNameOverride(outbound.tag) || 'wireguard-custom';
+        const addresses = normalizeStringArray(settings.address);
+        const warnings = [];
+
+        if (addresses.length === 0) {
+            warnings.push('Xray WireGuard 未设置 address，已使用 Xray 文档默认地址。');
+        }
+        if (settings.noKernelTun !== undefined) {
+            warnings.push('Xray noKernelTun 是运行时选项，Mihomo 节点中不会输出。');
+        }
+        if (settings.domainStrategy) {
+            warnings.push('Xray domainStrategy 没有一一对应的 Mihomo 节点字段，已忽略。');
+        }
+
+        return {
+            protocol: 'wireguard',
+            format: 'xray-json',
+            name,
+            host: firstPeer.server,
+            port: firstPeer.port,
+            wireguard: {
+                privateKey: normalizeRequiredString(settings.secretKey, '缺少 WireGuard secretKey。'),
+                addresses: addresses.length > 0 ? addresses : XRAY_WIREGUARD_DEFAULT_ADDRESSES,
+                peers,
+                mtu: normalizeOptionalInteger(settings.mtu, 'mtu'),
+                workers: normalizeOptionalInteger(settings.workers, 'workers'),
+                reserved: normalizeReserved(settings.reserved),
+            },
+            params: {},
+            warnings,
+        };
+    }
+
+    function findXrayWireGuardOutbound(config) {
+        if (isPlainObject(config) && isXrayWireGuardOutbound(config)) {
+            return config;
+        }
+
+        const outbounds = isPlainObject(config) ? config.outbounds : Array.isArray(config) ? config : [];
+        if (!Array.isArray(outbounds)) {
+            return null;
+        }
+
+        return outbounds.find((item) => isPlainObject(item) && isXrayWireGuardOutbound(item)) || null;
+    }
+
+    function isXrayWireGuardOutbound(outbound) {
+        return String(outbound.protocol || '').toLowerCase() === 'wireguard';
+    }
+
+    function normalizeXrayWireGuardPeers(value) {
+        if (!Array.isArray(value) || value.length === 0) {
+            throw new Error('WireGuard peers 至少需要一项。');
+        }
+
+        return value.map((peer, index) => normalizeXrayWireGuardPeer(peer, index));
+    }
+
+    function normalizeXrayWireGuardPeer(peer, index) {
+        const source = isPlainObject(peer) ? peer : {};
+        const endpoint = normalizeRequiredString(source.endpoint, `WireGuard peer ${index + 1} 缺少 endpoint。`);
+        const server = splitHostPort(endpoint);
+        const allowedIPs = normalizeStringArray(source.allowedIPs);
+        return {
+            server: server.host,
+            port: server.port,
+            publicKey: normalizeRequiredString(source.publicKey, `WireGuard peer ${index + 1} 缺少 publicKey。`),
+            preSharedKey: normalizeNameOverride(source.preSharedKey),
+            keepAlive: normalizeOptionalInteger(source.keepAlive, 'keepAlive'),
+            allowedIPs: allowedIPs.length > 0 ? allowedIPs : ['0.0.0.0/0', '::/0'],
+        };
+    }
+
+    function normalizeStringArray(value) {
+        if (Array.isArray(value)) {
+            return value.map((item) => String(item || '').trim()).filter(Boolean);
+        }
+
+        const item = String(value || '').trim();
+        return item ? [item] : [];
+    }
+
+    function normalizeRequiredString(value, message) {
+        const text = String(value || '').trim();
+        if (!text) {
+            throw new Error(message);
+        }
+        return text;
+    }
+
+    function normalizeOptionalInteger(value, fieldName) {
+        if (value === undefined || value === null || value === '') {
+            return 0;
+        }
+
+        const text = String(value).trim();
+        if (!/^\d+$/.test(text)) {
+            throw new Error(`WireGuard ${fieldName} 必须是非负整数。`);
+        }
+
+        const number = Number.parseInt(text, 10);
+        if (!Number.isInteger(number) || number < 0) {
+            throw new Error(`WireGuard ${fieldName} 必须是非负整数。`);
+        }
+        return number;
+    }
+
+    function normalizeReserved(value) {
+        if (value === undefined || value === null || value === '') {
+            return [];
+        }
+        if (!Array.isArray(value) || value.length !== 3) {
+            throw new Error('WireGuard reserved 必须是 3 个数字。');
+        }
+
+        return value.map((item) => {
+            const text = String(item).trim();
+            if (!/^\d+$/.test(text)) {
+                throw new Error('WireGuard reserved 必须是 0-255 之间的数字。');
+            }
+
+            const number = Number.parseInt(text, 10);
+            if (!Number.isInteger(number) || number < 0 || number > 255) {
+                throw new Error('WireGuard reserved 必须是 0-255 之间的数字。');
+            }
+            return number;
+        });
     }
 
     function parseShadowsocks(raw) {
@@ -423,6 +631,10 @@
             return node;
         }
 
+        if (parsed.protocol === 'wireguard') {
+            return toMihomoWireGuardProxy(parsed);
+        }
+
         const node = {
             name: parsed.name,
             type: parsed.protocol,
@@ -454,7 +666,93 @@
         return node;
     }
 
+    function toMihomoWireGuardProxy(parsed) {
+        const config = parsed.wireguard;
+        const addressFields = splitWireGuardAddresses(config.addresses);
+        const firstPeer = config.peers[0];
+        const node = {
+            name: parsed.name,
+            type: 'wireguard',
+            server: firstPeer.server,
+            port: firstPeer.port,
+            ip: addressFields.ip,
+            'private-key': config.privateKey,
+            'public-key': firstPeer.publicKey,
+            udp: true,
+        };
+
+        if (addressFields.ipv6) {
+            node.ipv6 = addressFields.ipv6;
+        }
+        if (firstPeer.preSharedKey) {
+            node['pre-shared-key'] = firstPeer.preSharedKey;
+        }
+        if (firstPeer.keepAlive) {
+            node['persistent-keepalive'] = firstPeer.keepAlive;
+        }
+        if (firstPeer.allowedIPs?.length > 0) {
+            node['allowed-ips'] = firstPeer.allowedIPs;
+        }
+        if (config.mtu) {
+            node.mtu = config.mtu;
+        }
+        if (config.workers) {
+            node.workers = config.workers;
+        }
+        if (config.reserved?.length > 0) {
+            node.reserved = config.reserved;
+        }
+        if (config.peers.length > 1) {
+            node.peers = config.peers.map((peer) => renderMihomoWireGuardPeer(peer));
+            delete node.server;
+            delete node.port;
+            delete node['public-key'];
+            delete node['pre-shared-key'];
+            delete node['allowed-ips'];
+        }
+
+        return node;
+    }
+
+    function splitWireGuardAddresses(addresses) {
+        const fields = {};
+        for (const address of addresses) {
+            if (String(address).includes(':')) {
+                if (!fields.ipv6) {
+                    fields.ipv6 = address;
+                }
+            } else if (!fields.ip) {
+                fields.ip = address;
+            }
+        }
+
+        if (!fields.ip) {
+            fields.ip = addresses[0];
+        }
+
+        return fields;
+    }
+
+    function renderMihomoWireGuardPeer(peer) {
+        const node = {
+            server: peer.server,
+            port: peer.port,
+            'public-key': peer.publicKey,
+            'allowed-ips': peer.allowedIPs,
+        };
+
+        if (peer.preSharedKey) {
+            node['pre-shared-key'] = peer.preSharedKey;
+        }
+
+        return node;
+    }
+
     function renderRawShareLink(raw, parsed, overrides) {
+        if (parsed.protocol === 'wireguard') {
+            return raw;
+        }
+
         if (!overrides.entryHost && !overrides.entryPort && !overrides.name) {
             return raw;
         }

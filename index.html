@@ -520,11 +520,11 @@
                         <h2>输入</h2>
                     </div>
                     <div class="section-body">
-                        <label for="shareLink">分享链接</label>
+                        <label for="shareLink">分享链接 / Xray 配置</label>
                         <textarea
                             id="shareLink"
                             spellcheck="false"
-                            placeholder="每行一条：vless://uuid@example.com:443?type=ws&amp;security=tls#custom"
+                            placeholder="每行一条分享链接，或粘贴 Xray WireGuard outbound / 完整 JSON 配置"
                         ></textarea>
 
                         <div class="options">
@@ -619,7 +619,7 @@
 
                     <div class="output-panel">
                         <div class="output-title">
-                            <strong>Xray 原始链接</strong>
+                            <strong>Xray 原始输入</strong>
                             <button id="copyXray" type="button" disabled>复制</button>
                         </div>
                         <pre id="xrayOutput"></pre>
@@ -775,6 +775,11 @@
             }
 
             function getInputLines() {
+                const trimmed = input.value.trim();
+                if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+                    return [trimmed];
+                }
+
                 return input.value
                     .split(/\r?\n/)
                     .map((line) => line.trim())

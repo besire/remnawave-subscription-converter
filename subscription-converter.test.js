@@ -12,6 +12,26 @@ const reality =
     'vless://22222222-2222-4222-8222-222222222222@[2001:db8::1]:8443?type=tcp&security=reality&sni=www.example.com&pbk=public-key&sid=abcd&flow=xtls-rprx-vision#reality-vless';
 const httpUpgrade =
     'vless://33333333-3333-4333-8333-333333333333@example.com:443?type=httpupgrade&security=tls&path=%2Fupgrade&host=edge.example.com#hu-vless';
+const xrayWireGuardOutbound = `{
+  "tag": "warp-wireguard",
+  "protocol": "wireguard",
+  "settings": {
+    "secretKey": "PRIVATE_KEY",
+    "address": ["172.16.0.2/32", "2606:4700:110:8f77::2/128"],
+    "mtu": 1420,
+    "reserved": [1, 2, 3],
+    "domainStrategy": "ForceIP",
+    "peers": [
+      {
+        "endpoint": "engage.cloudflareclient.com:2408",
+        "publicKey": "PUBLIC_KEY",
+        "preSharedKey": "PRE_SHARED_KEY",
+        "keepAlive": 25,
+        "allowedIPs": ["0.0.0.0/0", "::/0"]
+      }
+    ]
+  }
+}`;
 
 const vlessResult = converter.convertShareLink(vless);
 assert.match(vlessResult.mihomoYaml, /type: "vless"/);
@@ -61,6 +81,66 @@ const httpUpgradeResult = converter.convertShareLink(httpUpgrade);
 assert.match(httpUpgradeResult.mihomoYaml, /network: "ws"/);
 assert.match(httpUpgradeResult.mihomoYaml, /v2ray-http-upgrade: true/);
 assert.match(httpUpgradeResult.mihomoYaml, /Host: "edge.example.com"/);
+
+const wireGuardResult = converter.convertShareLink(xrayWireGuardOutbound);
+assert.match(wireGuardResult.mihomoYaml, /type: "wireguard"/);
+assert.match(wireGuardResult.mihomoYaml, /name: "warp-wireguard"/);
+assert.match(wireGuardResult.mihomoYaml, /server: "engage.cloudflareclient.com"/);
+assert.match(wireGuardResult.mihomoYaml, /port: 2408/);
+assert.match(wireGuardResult.mihomoYaml, /ip: "172.16.0.2\/32"/);
+assert.match(wireGuardResult.mihomoYaml, /ipv6: "2606:4700:110:8f77::2\/128"/);
+assert.match(wireGuardResult.mihomoYaml, /private-key: "PRIVATE_KEY"/);
+assert.match(wireGuardResult.mihomoYaml, /public-key: "PUBLIC_KEY"/);
+assert.match(wireGuardResult.mihomoYaml, /pre-shared-key: "PRE_SHARED_KEY"/);
+assert.match(wireGuardResult.mihomoYaml, /persistent-keepalive: 25/);
+assert.match(wireGuardResult.mihomoYaml, /allowed-ips:/);
+assert.match(wireGuardResult.mihomoYaml, /reserved:/);
+assert.match(wireGuardResult.warnings.join('\n'), /domainStrategy/);
+
+const xrayFullConfig = JSON.stringify({
+    outbounds: [
+        {
+            tag: 'direct',
+            protocol: 'freedom',
+        },
+        JSON.parse(xrayWireGuardOutbound),
+    ],
+});
+const wireGuardFullConfigResult = converter.convertShareLink(xrayFullConfig, {
+    entryHost: 'wg.example.com',
+    entryPort: 51820,
+    name: 'WG 节点',
+});
+assert.match(wireGuardFullConfigResult.mihomoYaml, /name: "WG 节点"/);
+assert.match(wireGuardFullConfigResult.mihomoYaml, /server: "wg.example.com"/);
+assert.match(wireGuardFullConfigResult.mihomoYaml, /port: 51820/);
+assert.match(wireGuardFullConfigResult.fullMihomoYaml, /type: "wireguard"/);
+assert.strictEqual(wireGuardFullConfigResult.xrayRaw, xrayFullConfig);
+
+const xrayWireGuardMultiPeer = JSON.stringify({
+    tag: 'multi-wg',
+    protocol: 'wireguard',
+    settings: {
+        secretKey: 'PRIVATE_KEY',
+        address: ['172.16.0.3/32'],
+        peers: [
+            {
+                endpoint: 'peer-a.example.com:51820',
+                publicKey: 'PUBLIC_A',
+                keepAlive: 15,
+            },
+            {
+                endpoint: 'peer-b.example.com:51821',
+                publicKey: 'PUBLIC_B',
+            },
+        ],
+    },
+});
+const wireGuardMultiPeerResult = converter.convertShareLink(xrayWireGuardMultiPeer);
+assert.match(wireGuardMultiPeerResult.mihomoYaml, /peers:/);
+assert.match(wireGuardMultiPeerResult.mihomoYaml, /server: "peer-a.example.com"/);
+assert.match(wireGuardMultiPeerResult.mihomoYaml, /server: "peer-b.example.com"/);
+assert.match(wireGuardMultiPeerResult.mihomoYaml, /persistent-keepalive: 15/);
 
 assert.strictEqual(vlessResult.xrayRaw, vless);
 
@@ -169,6 +249,21 @@ assert.throws(
             itemOverrides: [{ entryPort: 70000 }],
         }),
     /端口/,
+);
+assert.throws(() => converter.convertShareLink('{"protocol":"wireguard","settings":{"peers":[]}}'), /peers/);
+assert.throws(
+    () =>
+        converter.convertShareLink(
+            '{"protocol":"wireguard","settings":{"secretKey":"PRIVATE","peers":[{"endpoint":"example.com:51820"}]}}',
+        ),
+    /publicKey/,
+);
+assert.throws(
+    () =>
+        converter.convertShareLink(
+            '{"protocol":"wireguard","settings":{"secretKey":"PRIVATE","mtu":"1420abc","peers":[{"endpoint":"example.com:51820","publicKey":"PUBLIC"}]}}',
+        ),
+    /mtu/,
 );
 assert.throws(() => converter.convertShareLink('https://example.com'), /暂不支持该协议/);
 

@@ -7,12 +7,13 @@
 - `vless://...`
 - `trojan://...`
 - `ss://...`
+- Xray WireGuard outbound JSON，或包含 WireGuard outbound 的完整 Xray JSON 配置
 
 工具只在浏览器本地解析，不会请求后端，也不会上传你的链接。
 
 ## 使用方式
 
-打开 `index.html`，粘贴分享链接，然后复制生成结果。可以一次粘贴多条，每行一条。
+打开 `index.html`，粘贴分享链接或 Xray WireGuard JSON，然后复制生成结果。分享链接可以一次粘贴多条，每行一条；JSON 配置一次粘贴一份。
 
 可选项：
 
@@ -22,13 +23,20 @@
 - 每条链接单独设置：粘贴链接后可以展开每一条的下拉设置，单独覆盖入口 IP / 域名、入口端口和节点名称；单独设置优先于上面的全局设置。
 - 当前 Mihomo 配置：填写后会在现有配置基础上追加新节点、代理组引用和规则；留空则生成新的基础配置。
 
+WireGuard 说明：
+
+- WireGuard 没有像 `vless://` 那样统一通用的分享链接格式。
+- 本工具支持从 Xray 的 `protocol: "wireguard"` outbound 转成 Mihomo `type: wireguard` 节点。
+- 主要映射：`settings.secretKey` -> `private-key`，`settings.address` -> `ip` / `ipv6`，`settings.peers` -> `server` / `port` / `public-key` / `allowed-ips`。
+- Xray 的 `noKernelTun`、`domainStrategy` 属于 Xray 运行时选项，不会写入 Mihomo 节点；工具会在警告里提示。
+
 生成结果：
 
 - `完整 Mihomo 配置`：包含基础 DNS、所有节点、代理组和 `MATCH` 规则；如果填写了当前配置，会在当前配置基础上生成。
 - `Mihomo 节点 YAML`：粘贴到 Remnawave Mihomo 模板的 `proxies:` 下。
 - `代理组片段`：把其中的节点名加入你需要的 `proxy-groups`。
 - `规则片段`：和 `proxy-groups` 使用同一个名字，避免 `proxy not found`。
-- `Xray 原始链接`：用于需要 raw/share link 的客户端或手工保存。
+- `Xray 原始输入`：用于需要 raw/share link 或原始 JSON 的客户端或手工保存。
 
 ## 在 Remnawave 中只给某个用户使用
 
